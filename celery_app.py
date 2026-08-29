@@ -1,0 +1,22 @@
+from celery import Celery
+
+from app.core.config import settings
+
+celery_app = Celery(
+    "bridgepay",
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    broker_connection_retry_on_startup=True,
+)
+
+# Explicit import (rather than autodiscover_tasks, which expects a
+# Django-style app registry) so tasks are reliably registered.
+from app.tasks import transfer_tasks  # noqa: E402,F401

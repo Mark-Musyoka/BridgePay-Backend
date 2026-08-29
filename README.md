@@ -82,7 +82,20 @@ alembic upgrade head
 - [x] Audit log (`audit_logs` table) — separate from the transaction ledger,
   tracks register, login success/failure, and transfer success/failure, with
   IP address
-- [ ] Celery background job for transfer confirmation (Phase 5)
+- [x] Celery background job for transfer confirmation (Phase 5) — mocked
+  notification, queued after a successful transfer, non-blocking
+- [ ] Admin view — list/flag all transactions (Phase 6)
+
+### Running the background worker (Phase 5)
+Requires Redis running locally (`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`
+in `.env`). Start the worker separately from the API:
+
+```bash
+celery -A celery_app worker --loglevel=info
+```
+
+On Windows, add `--pool=solo` (Celery's default prefork pool isn't supported
+there).
 
 ### Note on transfer safety
 `transfer_service.py` locks both accounts with `SELECT ... FOR UPDATE`, in a

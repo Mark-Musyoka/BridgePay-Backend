@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +10,9 @@ from app.models.user import User
 from app.schemas.transaction import TransactionResponse, TransferCreate
 from app.services.audit_service import log_action
 from app.services.transfer_service import InsufficientFundsError, execute_transfer
+from app.tasks.transfer_tasks import send_transfer_confirmation
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transfers", tags=["transfers"])
 
@@ -47,5 +52,19 @@ async def create_transfer(
         detail=f"to={payload.to_email} amount={payload.amount} transaction_id={transaction.id}",
     )
     await db.commit()
+
+    # Fire-and-forget: queues to Celery, doesn't block the HTTP response
+    # on notification delivery. If the broker is unreachable, the transfer
+    # itself has already succeeded and been committed — we log and move on
+    # rather than fail the whole request over a notification.
+    try:
+        send_transfer_confirmation.delay(
+            transaction_id=str(transaction.id),
+            from_email=current_user.email,
+            to_email=payload.to_email,
+            amount=str(payload.amount),
+        )
+    except Exception:
+        logger.exception("Failed to queue transfer confirmation task for transaction %s", transaction.id)
 
     return transaction
