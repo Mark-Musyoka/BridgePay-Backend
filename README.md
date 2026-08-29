@@ -70,7 +70,8 @@ there).
 
 ## Status
 
-**All 6 planned phases complete.** Every endpoint has been tested against a
+**All 6 planned phases complete, plus refresh tokens (Phase 7).** Every
+endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
 written and assumed to work.
@@ -123,6 +124,22 @@ written and assumed to work.
 - [x] `GET /admin/transactions` (optional `?user_email=` filter) and
   `GET /admin/audit-logs` (optional `?action=` filter) — both admin-only,
   a non-admin token gets `403`, no token gets `401`
+
+### Phase 7 — Refresh tokens (post-plan addition)
+The original plan called for "JWT short expiry + refresh token pattern" but
+only shipped the short-expiry access token. This closes that gap:
+- [x] `refresh_tokens` table — tokens stored **hashed** (SHA-256), never raw
+- [x] Login now returns both `access_token` and `refresh_token`
+- [x] `POST /auth/refresh` — single-use rotation: presenting a refresh token
+  issues a new access + refresh token pair and immediately revokes the one
+  used
+- [x] **Reuse detection**: presenting an already-revoked refresh token (i.e.
+  a token that's already been rotated once) is treated as a signal of theft
+  — every refresh token for that user is revoked immediately, forcing
+  re-login on all devices. Verified: rotate once (works), replay the
+  original token (401 + full revocation), then confirm the *second*
+  (previously valid) token is also dead.
+- [x] `POST /auth/logout` — revokes a specific refresh token
 
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md

@@ -10,8 +10,15 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.session import get_db
 from app.models.account import Account
 from app.models.user import User
-from app.schemas.user import Token, UserCreate, UserResponse
+from app.schemas.user import LogoutRequest, RefreshRequest, Token, UserCreate, UserResponse
 from app.services.audit_service import log_action
+from app.services.refresh_token_service import (
+    RefreshTokenInvalid,
+    RefreshTokenReused,
+    issue_refresh_token,
+    revoke_refresh_token,
+    rotate_refresh_token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -66,7 +73,39 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
         )
 
     await log_action(db, request=request, action="login_success", user_id=user.id)
-    await db.commit()
 
     access_token = create_access_token(subject=str(user.id))
-    return Token(access_token=access_token)
+    refresh_token = await issue_refresh_token(db, user.id)
+    await db.commit()
+
+    return Token(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/refresh", response_model=Token)
+@limiter.limit("20/minute")
+async def refresh(request: Request, payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        user_id, new_refresh_token = await rotate_refresh_token(db, payload.refresh_token)
+    except RefreshTokenReused:
+        await log_action(db, request=request, action="refresh_token_reuse_detected", detail="all sessions revoked")
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token reuse detected — all sessions have been revoked, please log in again",
+        )
+    except RefreshTokenInvalid:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+
+    await log_action(db, request=request, action="token_refreshed")
+    await db.commit()
+
+    new_access_token = create_access_token(subject=user_id)
+    return Token(access_token=new_access_token, refresh_token=new_refresh_token)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
+    await revoke_refresh_token(db, payload.refresh_token)
+    await db.commit()
+    return None

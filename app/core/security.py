@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 
 import bcrypt
 from jose import JWTError, jwt
@@ -31,3 +33,15 @@ def decode_access_token(token: str) -> str | None:
         return payload.get("sub")
     except JWTError:
         return None
+
+
+def generate_refresh_token() -> str:
+    """A high-entropy random string — not a JWT, since we look it up (hashed) in the DB."""
+    return secrets.token_urlsafe(64)
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """SHA-256 is fine here (unlike passwords): the input is already high-entropy
+    random data, not something an attacker could feasibly guess or brute-force —
+    we're hashing for lookup/storage safety, not for resisting guessing attacks."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
