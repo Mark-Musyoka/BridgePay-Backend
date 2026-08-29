@@ -25,6 +25,8 @@ incrementally in phases (see PLAN.md), picked up as time allows.
 ## Setup
 
 ```bash
+git clone https://github.com/Mark-Musyoka/BridgePay-Backend.git
+cd BridgePay-Backend
 python3 -m venv venv
 source venv/bin/activate   # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
