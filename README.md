@@ -22,6 +22,14 @@ phased build order.
 This is a learning project, not a race to launch — no fixed deadline. Built
 incrementally in phases (see PLAN.md), picked up as time allows.
 
+## Related repo
+This is the backend only. The frontend client lives in a separate repo:
+[BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend)
+
+```bash
+git clone https://github.com/Mark-Musyoka/BridgePay-Frontend.git
+```
+
 ## Setup
 
 ```bash
