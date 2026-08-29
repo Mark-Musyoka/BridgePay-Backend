@@ -1,5 +1,8 @@
 # BridgePay — Backend Plan
 
+**Status: all 6 phases built and tested — see README.md for verified detail.**
+This file is the original design; README.md tracks what's actually running.
+
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego & Mark.
 Goal: understand how real payment systems work internally — ledgers, transfers,
@@ -29,21 +32,26 @@ This is the single most important lesson of the project — it's how every real
 payment system (and accounting system) avoids "money disappearing" bugs.
 
 ## 4. Data models (v1)
-- **User** — id, email, hashed_password, full_name, created_at, is_active
+- **User** — id, email, hashed_password, full_name, created_at, is_active, is_admin
 - **Account** — id, user_id (FK), balance (cached, derived), currency
 - **Transaction** — id, from_account_id, to_account_id, amount, currency,
   status (pending/completed/failed), type, created_at, reference_note
-- **PaymentMethod** (mocked) — id, user_id, type (card/bank - sandbox only),
-  masked_details, is_verified
+- **AuditLog** — id, user_id (nullable), action, detail, ip_address, created_at
+  — records who-did-what (including failed attempts), separate from the
+  money-movement ledger above
 
-## 5. API surface (v1)
+Not built: **PaymentMethod** (mocked card/bank linking) — still out of scope,
+see section 8.
+
+## 5. API surface (v1) — all implemented, see README for status detail
 - `POST /auth/register`
 - `POST /auth/login` → returns JWT
 - `GET /users/me`
 - `GET /accounts/me` → balance + account info
 - `POST /transfers` → move money between two accounts (the core feature)
 - `GET /transactions` → paginated history for logged-in user
-- `GET /admin/transactions` → all transactions (admin-only, for fraud review)
+- `GET /admin/transactions` → all transactions (admin-only, optional `?user_email=` filter)
+- `GET /admin/audit-logs` → all audit entries (admin-only, optional `?action=` filter)
 
 ## 6. Security checklist (this is where your cybersecurity focus comes in)
 - Passwords: bcrypt, never plaintext, never logged
@@ -59,18 +67,18 @@ payment system (and accounting system) avoids "money disappearing" bugs.
 - `.env` for secrets, never committed; `.gitignore` covers it from commit 1
 
 ## 7. Build order (phased, one small task at a time)
-1. **Scaffolding** — folder structure, FastAPI app boots, `.env`/.gitignore,
+1. [x] **Scaffolding** — folder structure, FastAPI app boots, `.env`/.gitignore,
    Postgres connection via Neon, first Alembic migration (empty)
-2. **User + Auth** — register/login, JWT issuing, password hashing
-3. **Accounts + Transactions models** — migrations for `accounts` and
+2. [x] **User + Auth** — register/login, JWT issuing, password hashing
+3. [x] **Accounts + Transactions models** — migrations for `accounts` and
    `transactions`, seed a couple of test accounts
-4. **Transfer endpoint** — the core feature: move money between two accounts
+4. [x] **Transfer endpoint** — the core feature: move money between two accounts
    safely (this is where the ledger principle gets tested)
-5. **Transaction history endpoint** — paginated, filterable
-6. **Security hardening pass** — rate limiting, audit log, input edge cases
-7. **Celery integration** — background task for e.g. "send transfer
+5. [x] **Transaction history endpoint** — paginated, filterable
+6. [x] **Security hardening pass** — rate limiting, audit log, input edge cases
+7. [x] **Celery integration** — background task for e.g. "send transfer
    confirmation" (mocked, no real email needed yet)
-8. **Admin view** — simple endpoint(s) to see all transactions, flag
+8. [x] **Admin view** — simple endpoint(s) to see all transactions, flag
    suspicious ones (great spot to build a basic fraud-detection rule later)
 
 ## 8. Explicitly out of scope for now
@@ -78,19 +86,22 @@ payment system (and accounting system) avoids "money disappearing" bugs.
 - Multi-currency conversion logic
 - Production deployment / real user data
 
-## 9. Folder structure (proposed)
+## 9. Folder structure (as built — repo root, not nested under `backend/`)
 ```
-backend/
+BridgePay-Backend/
   app/
     api/
       auth.py
+      users.py
       accounts.py
       transfers.py
       transactions.py
       admin.py
+      deps.py          # get_current_user, get_current_admin_user
     core/
-      config.py       # settings, env vars
+      config.py        # settings, env vars
       security.py      # JWT, password hashing
+      limiter.py        # rate limiting (slowapi)
     db/
       base.py
       session.py
@@ -98,16 +109,22 @@ backend/
       user.py
       account.py
       transaction.py
-    schemas/          # Pydantic request/response models
+      audit_log.py
+    schemas/           # Pydantic request/response models
       user.py
       account.py
       transaction.py
-    services/         # business logic (kept out of route handlers)
+      admin.py
+    services/          # business logic (kept out of route handlers)
       transfer_service.py
+      audit_service.py
+    tasks/
+      transfer_tasks.py   # Celery task: mocked transfer confirmation
     main.py
   alembic/
   celery_app.py
   requirements.txt
   .env.example
   PLAN.md
+  README.md
 ```
