@@ -16,5 +16,15 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
+    # Comma-separated list of allowed origins for the deployed frontend
+    # (e.g. "https://bridgepay-frontend.vercel.app"). Local dev origins
+    # (localhost/127.0.0.1, any port) are always allowed separately — see
+    # main.py — so they don't need to be listed here.
+    ALLOWED_ORIGINS: str = ""
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
 
 settings = Settings()

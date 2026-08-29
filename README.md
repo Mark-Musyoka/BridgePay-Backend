@@ -141,6 +141,31 @@ only shipped the short-expiry access token. This closes that gap:
   (previously valid) token is also dead.
 - [x] `POST /auth/logout` — revokes a specific refresh token
 
+### Deployment readiness (hardening pass)
+Reviewed against a more mature sibling project's backend to catch gaps
+before deploying:
+- [x] CORS middleware — explicit `ALLOWED_ORIGINS` allow-list for the
+  deployed frontend, plus a regex allowing any `localhost`/`127.0.0.1`
+  port for local dev (so `npm run dev`'s random port never breaks CORS).
+  Verified: allowed origin gets `access-control-allow-origin` back,
+  `evil-site.com` does not.
+- [x] Global exception handler — any unhandled exception returns a generic
+  `{"detail": "Internal server error"}` to the client, while the real
+  traceback goes to the server log. Verified by forcing a real DB failure
+  mid-request: client got the generic message, server log had the full
+  traceback. Deliberately does **not** echo `str(exc)` to the client —
+  that leaks internal details (file paths, query fragments).
+- [x] `render.yaml` — declarative Blueprint for both the web service and
+  the Celery worker, so deployment isn't manual dashboard clicking.
+  Secrets (`DATABASE_URL`, `JWT_SECRET_KEY`, etc.) are marked `sync: false`
+  so Render prompts for them rather than storing them in the repo.
+- [x] `Dockerfile` — containerized entrypoint, not just "run uvicorn
+  directly."
+
+Not yet done: API versioning (`/api/v1` prefix) and a repository/service
+layer refactor — both would change the API contract the frontend's
+PLAN.md already documents, so they're a deliberate separate step.
+
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md
 - Real payment rail integration (Stripe/Paystack sandbox)
