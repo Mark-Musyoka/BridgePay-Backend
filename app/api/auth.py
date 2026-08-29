@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
@@ -5,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
+from app.models.account import Account
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
 
@@ -23,6 +26,11 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
         full_name=payload.full_name,
     )
     db.add(user)
+    await db.flush()  # get user.id before creating the dependent account
+
+    account = Account(user_id=user.id, balance=Decimal("0.00"))
+    db.add(account)
+
     await db.commit()
     await db.refresh(user)
     return user

@@ -69,7 +69,21 @@ alembic upgrade head
 - [x] `POST /auth/register`
 - [x] `POST /auth/login` → JWT access token
 - [x] `GET /users/me` (protected route, proves the auth flow end-to-end)
-- [ ] Accounts + Transactions models (Phase 3)
+**Phase 3 — Accounts + Transactions**
+- [x] Account model (auto-created for every user at registration, balance starts at 0.00)
+- [x] Transaction model (immutable ledger, enums for status/type)
+- [x] `GET /accounts/me`
+- [x] `POST /transfers` — the core feature, row-locked to prevent race conditions
+- [x] `GET /transactions` — paginated history
+- [ ] Security hardening pass — rate limiting, audit log (Phase 4)
+
+### Note on transfer safety
+`transfer_service.py` locks both accounts with `SELECT ... FOR UPDATE`, in a
+fixed order by account id, before checking the balance — so two simultaneous
+transfers can't both pass a stale balance check, and two transfers in
+opposite directions between the same accounts can't deadlock each other.
+Verified against: successful transfer, insufficient funds, self-transfer,
+nonexistent recipient, and invalid (negative) amount.
 
 ### Note on password hashing
 We use the `bcrypt` library directly rather than `passlib`. `passlib` is

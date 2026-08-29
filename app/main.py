@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api import auth, users
+from app.api import accounts, auth, transactions, transfers, users
 from app.core.config import settings
 
 app = FastAPI(
@@ -11,6 +11,9 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(accounts.router)
+app.include_router(transfers.router)
+app.include_router(transactions.router)
 
 
 @app.get("/")
