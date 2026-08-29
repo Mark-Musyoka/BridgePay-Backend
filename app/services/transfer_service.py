@@ -80,6 +80,7 @@ async def execute_transfer(
     )
     db.add(transaction)
 
-    await db.commit()
-    await db.refresh(transaction)
+    # Flush (not commit) — the caller commits, so this transfer and any
+    # audit log entry it adds land in the same atomic DB transaction.
+    await db.flush()
     return transaction

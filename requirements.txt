@@ -11,3 +11,4 @@ python-multipart==0.0.19
 python-dotenv==1.0.1
 celery==5.4.0
 redis==5.2.1
+slowapi==0.1.9

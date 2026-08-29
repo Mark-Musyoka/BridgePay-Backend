@@ -69,13 +69,20 @@ alembic upgrade head
 - [x] `POST /auth/register`
 - [x] `POST /auth/login` → JWT access token
 - [x] `GET /users/me` (protected route, proves the auth flow end-to-end)
+
 **Phase 3 — Accounts + Transactions**
 - [x] Account model (auto-created for every user at registration, balance starts at 0.00)
 - [x] Transaction model (immutable ledger, enums for status/type)
 - [x] `GET /accounts/me`
 - [x] `POST /transfers` — the core feature, row-locked to prevent race conditions
 - [x] `GET /transactions` — paginated history
-- [ ] Security hardening pass — rate limiting, audit log (Phase 4)
+
+**Phase 4 — Security hardening**
+- [x] Rate limiting: `/auth/register` (5/min), `/auth/login` (10/min), `/transfers` (20/min) — keyed by IP
+- [x] Audit log (`audit_logs` table) — separate from the transaction ledger,
+  tracks register, login success/failure, and transfer success/failure, with
+  IP address
+- [ ] Celery background job for transfer confirmation (Phase 5)
 
 ### Note on transfer safety
 `transfer_service.py` locks both accounts with `SELECT ... FOR UPDATE`, in a
