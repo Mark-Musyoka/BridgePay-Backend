@@ -1,7 +1,26 @@
 # BridgePay Backend
 
-FastAPI backend for BridgePay. See [PLAN.md](./PLAN.md) for the full
-architecture and phased build order.
+FastAPI backend for BridgePay, a learning-project payments platform
+(PayPal-style). See [PLAN.md](./PLAN.md) for the full architecture and
+phased build order.
+
+## Team
+- **Abednego Ndimu** ([@abednegoingplaces](https://github.com/abednegoingplaces)) — collaborator
+- **Mark Musyoka** ([@Mark-Musyoka](https://github.com/Mark-Musyoka)) — owner
+
+## Tech stack
+- FastAPI (async) + Pydantic
+- SQLAlchemy 2.0 (async) + Alembic migrations
+- Postgres (Neon)
+- Celery + Redis for background jobs
+- JWT auth (python-jose), bcrypt for password hashing
+- Deployed on Render
+- Paired with [BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend)
+  (Next.js)
+
+## Timeline
+This is a learning project, not a race to launch — no fixed deadline. Built
+incrementally in phases (see PLAN.md), picked up as time allows.
 
 ## Setup
 
