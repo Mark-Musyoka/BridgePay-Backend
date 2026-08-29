@@ -84,7 +84,19 @@ alembic upgrade head
   IP address
 - [x] Celery background job for transfer confirmation (Phase 5) — mocked
   notification, queued after a successful transfer, non-blocking
-- [ ] Admin view — list/flag all transactions (Phase 6)
+- [x] Admin view — list/flag all transactions (Phase 6)
+
+### Admin access (Phase 6)
+`is_admin` is a boolean on `users`, defaulting to `false` — no signup flow
+grants it. For local dev, promote a user directly in the DB:
+
+```sql
+UPDATE users SET is_admin = true WHERE email = 'you@example.com';
+```
+
+`GET /admin/transactions` (optionally filtered by `?user_email=`) and
+`GET /admin/audit-logs` (optionally filtered by `?action=`) are both
+admin-only — a non-admin token gets `403`, no token gets `401`.
 
 ### Running the background worker (Phase 5)
 Requires Redis running locally (`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`

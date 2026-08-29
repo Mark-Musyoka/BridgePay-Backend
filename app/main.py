@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api import accounts, auth, transactions, transfers, users
+from app.api import accounts, admin, auth, transactions, transfers, users
 from app.core.config import settings
 from app.core.limiter import limiter
 
@@ -20,6 +20,7 @@ app.include_router(users.router)
 app.include_router(accounts.router)
 app.include_router(transfers.router)
 app.include_router(transactions.router)
+app.include_router(admin.router)
 
 
 @app.get("/")
