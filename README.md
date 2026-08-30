@@ -70,7 +70,9 @@ there).
 
 ## Status
 
-**All 6 planned phases complete, plus refresh tokens (Phase 7).** Every
+**All 6 planned phases complete, plus refresh tokens (Phase 7), API
+versioning + repository layer, and email verification/password reset
+(Phase 8).** Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
@@ -230,3 +232,8 @@ Closes a gap found when reviewing the backend for missing standard flows.
 - Real payment rail integration (Stripe/Paystack sandbox)
 - Multi-currency conversion
 - Production deployment
+- OAuth/social login (email+password only)
+- Rate limiting on `/auth/password-reset-request` and `/auth/verify-email`
+  uses the same in-memory (per-process) limiter as everything else — see
+  the note in Phase 4 about swapping to Redis-backed limits for a
+  multi-instance deployment
