@@ -7,8 +7,20 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.session import get_db
 from app.repositories.account_repository import AccountRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.user import LogoutRequest, RefreshRequest, Token, UserCreate, UserResponse
+from app.schemas.user import (
+    LogoutRequest,
+    RefreshRequest,
+    Token,
+    UserCreate,
+    UserResponse,
+    VerifyEmailRequest,
+)
 from app.services.audit_service import log_action
+from app.services.email_verification_service import (
+    EmailVerificationTokenInvalid,
+    confirm_verification_token,
+    issue_verification_token,
+)
 from app.services.refresh_token_service import (
     RefreshTokenInvalid,
     RefreshTokenReused,
@@ -16,6 +28,7 @@ from app.services.refresh_token_service import (
     revoke_refresh_token,
     rotate_refresh_token,
 )
+from app.tasks.email_tasks import send_verification_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,11 +51,34 @@ async def register(request: Request, payload: UserCreate, db: AsyncSession = Dep
     )
     await AccountRepository(db).create(user_id=user.id)
 
+    raw_verification_token = await issue_verification_token(db, user.id)
+
     await log_action(db, request=request, action="register", user_id=user.id, detail=user.email)
 
     await db.commit()
     await db.refresh(user)
+
+    try:
+        send_verification_email.delay(to_email=user.email, raw_token=raw_verification_token)
+    except Exception:
+        # Same non-blocking pattern as transfer confirmation: registration
+        # has already succeeded and committed, a queueing failure here
+        # shouldn't fail the whole request.
+        pass
+
     return user
+
+
+@router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_email(payload: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        await confirm_verification_token(db, payload.token)
+    except EmailVerificationTokenInvalid:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
+
+    await db.commit()
+    return None
 
 
 @router.post("/login", response_model=Token)
