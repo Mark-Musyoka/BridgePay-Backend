@@ -161,6 +161,23 @@ before deploying:
   so Render prompts for them rather than storing them in the repo.
 - [x] `Dockerfile` — containerized entrypoint, not just "run uvicorn
   directly."
+- [x] Automated test suite (`pytest` + `httpx.AsyncClient`, 21 tests) —
+  covers register/login/refresh/logout (including the token-reuse attack
+  scenario), transfers (success, insufficient funds, self-transfer,
+  nonexistent recipient, negative amount), and admin access control.
+  Everything previously verified by hand via curl is now a regression test.
+  Uses a dedicated `bridgepay_test` database with a fresh schema per test.
+  Run with:
+  ```bash
+  pip install -r requirements-dev.txt
+  pytest
+  ```
+  Fixed a real bug while wiring this up: the test DB engine was reused
+  across tests with a connection pool, but pytest-asyncio gives each test
+  its own event loop — a pooled connection from one loop is invalid in the
+  next, causing `InterfaceError: another operation is in progress`. Fixed
+  by using `NullPool` for the test engine (fresh connection per use,
+  never reused across loops).
 
 Not yet done: API versioning (`/api/v1` prefix) and a repository/service
 layer refactor — both would change the API contract the frontend's
