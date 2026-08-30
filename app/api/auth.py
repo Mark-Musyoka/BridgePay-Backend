@@ -9,6 +9,8 @@ from app.repositories.account_repository import AccountRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import (
     LogoutRequest,
+    PasswordResetConfirmSchema,
+    PasswordResetRequestSchema,
     RefreshRequest,
     Token,
     UserCreate,
@@ -21,6 +23,11 @@ from app.services.email_verification_service import (
     confirm_verification_token,
     issue_verification_token,
 )
+from app.services.password_reset_service import (
+    PasswordResetTokenInvalid,
+    confirm_password_reset,
+    request_password_reset,
+)
 from app.services.refresh_token_service import (
     RefreshTokenInvalid,
     RefreshTokenReused,
@@ -28,7 +35,7 @@ from app.services.refresh_token_service import (
     revoke_refresh_token,
     rotate_refresh_token,
 )
-from app.tasks.email_tasks import send_verification_email
+from app.tasks.email_tasks import send_password_reset_email, send_verification_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -137,5 +144,43 @@ async def refresh(request: Request, payload: RefreshRequest, db: AsyncSession = 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
     await revoke_refresh_token(db, payload.refresh_token)
+    await db.commit()
+    return None
+
+
+@router.post("/password-reset-request", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def password_reset_request(
+    request: Request, payload: PasswordResetRequestSchema, db: AsyncSession = Depends(get_db)
+):
+    raw_token = await request_password_reset(db, payload.email)
+
+    await log_action(db, request=request, action="password_reset_requested", detail=payload.email)
+    await db.commit()
+
+    # Only queue the email if the user actually exists — but the HTTP
+    # response is identical (204, no body) either way, so this endpoint
+    # can't be used to discover which emails are registered.
+    if raw_token is not None:
+        try:
+            send_password_reset_email.delay(to_email=payload.email, raw_token=raw_token)
+        except Exception:
+            pass
+
+    return None
+
+
+@router.post("/password-reset-confirm", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+async def password_reset_confirm(
+    request: Request, payload: PasswordResetConfirmSchema, db: AsyncSession = Depends(get_db)
+):
+    try:
+        await confirm_password_reset(db, payload.token, payload.new_password)
+    except PasswordResetTokenInvalid:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+
+    await log_action(db, request=request, action="password_reset_completed")
     await db.commit()
     return None

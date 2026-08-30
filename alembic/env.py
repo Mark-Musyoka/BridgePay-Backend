@@ -14,7 +14,15 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.core.config import settings
 from app.db.base import Base
 # Import models here as they're added, so Alembic's autogenerate can see them.
-from app.models import account, audit_log, email_verification_token, refresh_token, transaction, user  # noqa: F401
+from app.models import (  # noqa: F401
+    account,
+    audit_log,
+    email_verification_token,
+    password_reset_token,
+    refresh_token,
+    transaction,
+    user,
+)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

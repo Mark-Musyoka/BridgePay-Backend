@@ -41,3 +41,12 @@ class LogoutRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str
+
+
+class PasswordResetRequestSchema(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmSchema(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8, max_length=128)

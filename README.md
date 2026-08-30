@@ -194,10 +194,36 @@ before deploying:
   passing after this refactor, including the transfer-locking and
   refresh-token-reuse scenarios, to confirm behavior didn't shift.
 
-Not done: email verification / password reset flows, and a `service.py`
-layer generalized across every module (transfers/audit already have one;
-the rest currently call repositories directly from routers, which is a
-reasonable stopping point for a project this size).
+Not done: a `service.py` layer generalized across every module (transfers/
+audit already have one; the rest currently call repositories directly from
+routers, which is a reasonable stopping point for a project this size).
+
+### Phase 8 — Email verification + password reset (post-plan addition)
+Closes a gap found when reviewing the backend for missing standard flows.
+
+- [x] `is_verified` flag on `User` (defaults `false`), `EmailVerificationToken`
+  model — hashed, single-use, same pattern as `RefreshToken`
+- [x] Registration issues a verification token and queues a mocked
+  "send verification email" Celery task (logs the raw token — matches
+  `transfer_tasks.py`'s pattern; the raw token is never stored, only its hash)
+- [x] `POST /auth/verify-email` — verified end-to-end: register → Celery
+  logs the token → verify → `is_verified` flips to `true` → reusing the
+  same token afterward correctly fails (single-use enforced)
+- [x] **Transfers are gated behind verification** — a real business rule
+  for a payments app, via a new `get_current_verified_user` dependency
+  (mirrors `get_current_admin_user`). Unverified users can register and
+  log in, but `POST /transfers` returns `403` until they verify. Covered
+  by its own test (`test_unverified_user_cannot_send_transfer`).
+- [x] `POST /auth/password-reset-request` / `POST /auth/password-reset-confirm`
+  — `PasswordResetToken` model, same hashed/single-use pattern. The
+  request endpoint returns an identical `204` whether or not the email is
+  registered (user-enumeration protection) — verified the Celery log only
+  actually fires for real accounts, not fake ones.
+- [x] **Resetting a password revokes every refresh token for that user** —
+  a reset is a signal the account may have been compromised, so any
+  existing session (stolen or not) is killed. Verified live: logged in
+  before the reset, confirmed that pre-reset refresh token is dead
+  afterward — not just asserted in a comment.
 
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md
