@@ -179,9 +179,25 @@ before deploying:
   by using `NullPool` for the test engine (fresh connection per use,
   never reused across loops).
 
-Not yet done: API versioning (`/api/v1` prefix) and a repository/service
-layer refactor — both would change the API contract the frontend's
-PLAN.md already documents, so they're a deliberate separate step.
+### API versioning + repository layer
+- [x] All endpoints now live under `/api/v1` (e.g. `/api/v1/auth/register`).
+  The root health check (`/`) stays unversioned — `render.yaml`'s
+  `healthCheckPath` and most infra tooling expect that. This is a breaking
+  URL change; the frontend's PLAN.md contract has been updated to match.
+- [x] Repository layer — `app/repositories/` (`UserRepository`,
+  `AccountRepository`, `TransactionRepository`, `AuditLogRepository`) now
+  holds the raw DB queries that used to live directly in route handlers.
+  Routers call repositories; `transfer_service.py` (business logic +
+  locking) and `audit_service.py` were already separated and are
+  unchanged in behavior — only their internal queries now go through
+  `AccountRepository`/`UserRepository` too. All 21 tests re-verified
+  passing after this refactor, including the transfer-locking and
+  refresh-token-reuse scenarios, to confirm behavior didn't shift.
+
+Not done: email verification / password reset flows, and a `service.py`
+layer generalized across every module (transfers/audit already have one;
+the rest currently call repositories directly from routers, which is a
+reasonable stopping point for a project this size).
 
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md

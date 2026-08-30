@@ -47,17 +47,21 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-app.include_router(auth.router)
-app.include_router(users.router)
-app.include_router(accounts.router)
-app.include_router(transfers.router)
-app.include_router(transactions.router)
-app.include_router(admin.router)
+API_PREFIX = "/api/v1"
+
+app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(users.router, prefix=API_PREFIX)
+app.include_router(accounts.router, prefix=API_PREFIX)
+app.include_router(transfers.router, prefix=API_PREFIX)
+app.include_router(transactions.router, prefix=API_PREFIX)
+app.include_router(admin.router, prefix=API_PREFIX)
 
 
 @app.get("/")
 async def health_check():
-    """Basic liveness check — confirms the app boots and responds."""
+    """Basic liveness check — confirms the app boots and responds. Deliberately
+    NOT under /api/v1: render.yaml's healthCheckPath and infra tooling generally
+    expect an unversioned root health check."""
     return {
         "status": "ok",
         "service": "bridgepay-backend",

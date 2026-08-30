@@ -1,15 +1,12 @@
-from decimal import Decimal
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.limiter import limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
-from app.models.account import Account
-from app.models.user import User
+from app.repositories.account_repository import AccountRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.user import LogoutRequest, RefreshRequest, Token, UserCreate, UserResponse
 from app.services.audit_service import log_action
 from app.services.refresh_token_service import (
@@ -26,22 +23,20 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 async def register(request: Request, payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(select(User).where(User.email == payload.email))
-    if existing.scalar_one_or_none() is not None:
+    user_repo = UserRepository(db)
+
+    existing = await user_repo.get_by_email(payload.email)
+    if existing is not None:
         await log_action(db, request=request, action="register_failed_duplicate_email", detail=payload.email)
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
-    user = User(
+    user = await user_repo.create(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
     )
-    db.add(user)
-    await db.flush()  # get user.id before creating the dependent account
-
-    account = Account(user_id=user.id, balance=Decimal("0.00"))
-    db.add(account)
+    await AccountRepository(db).create(user_id=user.id)
 
     await log_action(db, request=request, action="register", user_id=user.id, detail=user.email)
 
@@ -54,8 +49,7 @@ async def register(request: Request, payload: UserCreate, db: AsyncSession = Dep
 @limiter.limit("10/minute")
 async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     # OAuth2PasswordRequestForm uses "username" as the field name; we treat it as email.
-    result = await db.execute(select(User).where(User.email == form_data.username))
-    user = result.scalar_one_or_none()
+    user = await UserRepository(db).get_by_email(form_data.username)
 
     if user is None or not verify_password(form_data.password, user.hashed_password):
         await log_action(

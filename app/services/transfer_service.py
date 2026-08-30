@@ -1,12 +1,12 @@
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.account import Account
 from app.models.transaction import Transaction, TransactionStatus, TransactionType
 from app.models.user import User
+from app.repositories.account_repository import AccountRepository
+from app.repositories.user_repository import UserRepository
 
 
 class InsufficientFundsError(Exception):
@@ -39,15 +39,14 @@ async def execute_transfer(
     if from_user.email == to_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot transfer to yourself")
 
-    to_user_result = await db.execute(select(User).where(User.email == to_email))
-    to_user = to_user_result.scalar_one_or_none()
+    account_repo = AccountRepository(db)
+
+    to_user = await UserRepository(db).get_by_email(to_email)
     if to_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient not found")
 
-    from_account_result = await db.execute(select(Account).where(Account.user_id == from_user.id))
-    from_account = from_account_result.scalar_one_or_none()
-    to_account_result = await db.execute(select(Account).where(Account.user_id == to_user.id))
-    to_account = to_account_result.scalar_one_or_none()
+    from_account = await account_repo.get_by_user_id(from_user.id)
+    to_account = await account_repo.get_by_user_id(to_user.id)
 
     if from_account is None or to_account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
@@ -57,8 +56,7 @@ async def execute_transfer(
     account_ids_in_order = sorted([from_account.id, to_account.id])
     locked_accounts = {}
     for acc_id in account_ids_in_order:
-        result = await db.execute(select(Account).where(Account.id == acc_id).with_for_update())
-        locked_accounts[acc_id] = result.scalar_one()
+        locked_accounts[acc_id] = await account_repo.get_by_id_locked(acc_id)
 
     from_account = locked_accounts[from_account.id]
     to_account = locked_accounts[to_account.id]

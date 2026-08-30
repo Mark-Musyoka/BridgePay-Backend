@@ -115,6 +115,11 @@ BridgePay-Backend/
       account.py
       transaction.py
       admin.py
+    repositories/       # raw DB queries, kept out of routers and services
+      user_repository.py
+      account_repository.py
+      transaction_repository.py
+      audit_log_repository.py
     services/          # business logic (kept out of route handlers)
       transfer_service.py
       audit_service.py
