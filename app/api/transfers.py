@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_verified_user
 from app.core.limiter import limiter
 from app.db.session import get_db
 from app.models.user import User
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/transfers", tags=["transfers"])
 async def create_transfer(
     request: Request,
     payload: TransferCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:

@@ -45,3 +45,15 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
             detail="Admin access required",
         )
     return current_user
+
+
+async def get_current_verified_user(current_user: User = Depends(get_current_user)) -> User:
+    """Gate for actions that move money — an unverified email shouldn't be
+    able to send funds. (Receiving is unaffected: this only gates the
+    sender's own request, not who they can transfer to.)"""
+    if not current_user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required before sending money",
+        )
+    return current_user

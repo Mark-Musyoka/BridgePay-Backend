@@ -1,15 +1,22 @@
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models.account import Account
 from app.models.user import User
 
+from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 
 
 async def _register_and_login(client, email, full_name):
     await register(client, email=email, full_name=full_name)
+    # Verification is tested end-to-end separately in test_auth.py; here we
+    # bypass the actual email flow so transfer tests can focus on transfer
+    # behavior without re-testing verification every time.
+    async with TestSessionLocal() as session:
+        await session.execute(update(User).where(User.email == email).values(is_verified=True))
+        await session.commit()
     login_response = await login(client, email=email)
     return login_response.json()["access_token"]
 
@@ -117,3 +124,20 @@ async def test_transaction_appears_in_sender_history(client, db_session):
     body = history.json()
     assert body["total"] == 1
     assert body["items"][0]["amount"] == "75.00"
+
+
+async def test_unverified_user_cannot_send_transfer(client, db_session):
+    # Deliberately does NOT use _register_and_login (which auto-verifies) —
+    # this test needs a genuinely unverified user to check the gate itself.
+    await register(client, email="noor@test.dev", full_name="Noor")
+    await register(client, email="omar@test.dev", full_name="Omar")
+    login_response = await login(client, email="noor@test.dev")
+    token = login_response.json()["access_token"]
+    await _fund_account(db_session, "noor@test.dev", "100.00")
+
+    response = await client.post(
+        "/api/v1/transfers",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"to_email": "omar@test.dev", "amount": "10.00"},
+    )
+    assert response.status_code == 403
