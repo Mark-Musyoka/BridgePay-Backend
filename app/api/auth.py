@@ -77,13 +77,16 @@ async def register(request: Request, payload: UserCreate, db: AsyncSession = Dep
 
 
 @router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
-async def verify_email(payload: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_email(request: Request, payload: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
     try:
         await confirm_verification_token(db, payload.token)
     except EmailVerificationTokenInvalid:
-        await db.rollback()
+        await log_action(db, request=request, action="email_verification_failed")
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
 
+    await log_action(db, request=request, action="email_verified")
     await db.commit()
     return None
 
@@ -131,7 +134,8 @@ async def refresh(request: Request, payload: RefreshRequest, db: AsyncSession = 
             detail="Refresh token reuse detected — all sessions have been revoked, please log in again",
         )
     except RefreshTokenInvalid:
-        await db.rollback()
+        await log_action(db, request=request, action="refresh_failed")
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
 
     await log_action(db, request=request, action="token_refreshed")
@@ -142,7 +146,8 @@ async def refresh(request: Request, payload: RefreshRequest, db: AsyncSession = 
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("20/minute")
+async def logout(request: Request, payload: LogoutRequest, db: AsyncSession = Depends(get_db)):
     await revoke_refresh_token(db, payload.refresh_token)
     await db.commit()
     return None
@@ -178,7 +183,8 @@ async def password_reset_confirm(
     try:
         await confirm_password_reset(db, payload.token, payload.new_password)
     except PasswordResetTokenInvalid:
-        await db.rollback()
+        await log_action(db, request=request, action="password_reset_failed")
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
 
     await log_action(db, request=request, action="password_reset_completed")
