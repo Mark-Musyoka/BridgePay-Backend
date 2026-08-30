@@ -16,12 +16,12 @@ async def test_non_admin_gets_403(client):
     await register(client, email="regular@test.dev", full_name="Regular")
     token = (await login(client, email="regular@test.dev")).json()["access_token"]
 
-    response = await client.get("/admin/transactions", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/admin/transactions", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
 
 
 async def test_no_token_gets_401(client):
-    response = await client.get("/admin/transactions")
+    response = await client.get("/api/v1/admin/transactions")
     assert response.status_code == 401
 
 
@@ -30,7 +30,7 @@ async def test_admin_can_access_transactions(client, db_session):
     await _make_admin(db_session, "root@test.dev")
     token = (await login(client, email="root@test.dev")).json()["access_token"]
 
-    response = await client.get("/admin/transactions", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/admin/transactions", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["total"] == 0
 
@@ -40,6 +40,6 @@ async def test_admin_can_access_audit_logs(client, db_session):
     await _make_admin(db_session, "root2@test.dev")
     token = (await login(client, email="root2@test.dev")).json()["access_token"]
 
-    response = await client.get("/admin/audit-logs", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/admin/audit-logs", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["total"] >= 1  # at least the register/login events above
