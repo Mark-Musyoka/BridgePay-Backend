@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from app.models.user import User
+from app.modules.users.models import User
 
 from tests.test_auth import login, register
 

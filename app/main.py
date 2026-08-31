@@ -6,9 +6,14 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api import accounts, admin, auth, transactions, transfers, users
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.modules.accounts.router import router as accounts_router
+from app.modules.admin.router import router as admin_router
+from app.modules.auth.router import router as auth_router
+from app.modules.transactions.router import router as transactions_router
+from app.modules.transfers.router import router as transfers_router
+from app.modules.users.router import router as users_router
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +54,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 API_PREFIX = "/api/v1"
 
-app.include_router(auth.router, prefix=API_PREFIX)
-app.include_router(users.router, prefix=API_PREFIX)
-app.include_router(accounts.router, prefix=API_PREFIX)
-app.include_router(transfers.router, prefix=API_PREFIX)
-app.include_router(transactions.router, prefix=API_PREFIX)
-app.include_router(admin.router, prefix=API_PREFIX)
+app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(accounts_router, prefix=API_PREFIX)
+app.include_router(transfers_router, prefix=API_PREFIX)
+app.include_router(transactions_router, prefix=API_PREFIX)
+app.include_router(admin_router, prefix=API_PREFIX)
 
 
 @app.get("/")

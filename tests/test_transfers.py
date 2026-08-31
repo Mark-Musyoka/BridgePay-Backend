@@ -2,8 +2,8 @@ from decimal import Decimal
 
 from sqlalchemy import select, update
 
-from app.models.account import Account
-from app.models.user import User
+from app.modules.accounts.models import Account
+from app.modules.users.models import User
 
 from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
