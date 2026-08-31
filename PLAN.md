@@ -86,49 +86,70 @@ see section 8.
 - Multi-currency conversion logic
 - Production deployment / real user data
 
-## 9. Folder structure (as built — repo root, not nested under `backend/`)
+## 9. Folder structure (as built — reorganized into modules in Phase 9,
+see README.md for the full rationale and the audit-review bug fixes that
+came out of it)
 ```
 BridgePay-Backend/
   app/
-    api/
-      auth.py
-      users.py
-      accounts.py
-      transfers.py
-      transactions.py
-      admin.py
-      deps.py          # get_current_user, get_current_admin_user
     core/
-      config.py        # settings, env vars
-      security.py      # JWT, password hashing
-      limiter.py        # rate limiting (slowapi)
+      config.py          # settings, env vars
+      security.py         # JWT, password hashing, shared token generate/hash helpers
+      limiter.py           # rate limiting (slowapi)
+      dependencies.py      # get_current_user, get_current_admin_user,
+                            # get_current_verified_user — cross-cutting,
+                            # used by nearly every module
     db/
       base.py
       session.py
-    models/
-      user.py
-      account.py
-      transaction.py
-      audit_log.py
-    schemas/           # Pydantic request/response models
-      user.py
-      account.py
-      transaction.py
-      admin.py
-    repositories/       # raw DB queries, kept out of routers and services
-      user_repository.py
-      account_repository.py
-      transaction_repository.py
-      audit_log_repository.py
-    services/          # business logic (kept out of route handlers)
-      transfer_service.py
-      audit_service.py
-    tasks/
-      transfer_tasks.py   # Celery task: mocked transfer confirmation
+    modules/
+      users/
+        models.py           # User
+        repository.py
+        schemas.py
+        router.py            # GET /users/me
+      auth/
+        models.py           # RefreshToken, EmailVerificationToken, PasswordResetToken
+        repository.py
+        schemas.py
+        service.py            # refresh rotation + reuse detection, email
+                               # verification, password reset
+        tasks.py               # mocked send_verification_email, send_password_reset_email
+        router.py               # /auth/register, /login, /refresh, /logout,
+                                 # /verify-email, /password-reset-*
+      accounts/
+        models.py           # Account
+        repository.py
+        schemas.py
+        router.py            # GET /accounts/me
+      transactions/
+        models.py           # Transaction (shared with transfers)
+        repository.py
+        schemas.py
+        router.py            # GET /transactions
+      transfers/
+        schemas.py
+        service.py            # execute_transfer — the row-locking logic
+        tasks.py               # mocked send_transfer_confirmation
+        router.py               # POST /transfers
+      admin/
+        router.py            # GET /admin/transactions, /admin/audit-logs
+                              # (reads across accounts/transactions/audit/users,
+                              # no models of its own)
+      audit/
+        models.py           # AuditLog
+        repository.py
+        schemas.py
+        service.py            # log_action — called from every other module
     main.py
   alembic/
+  tests/
   celery_app.py
   requirements.txt
+  requirements-dev.txt
+  pytest.ini
+  Dockerfile
+  render.yaml
   .env.example
   PLAN.md
   README.md

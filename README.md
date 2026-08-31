@@ -19,6 +19,32 @@ original phased build order.
 - Paired with [BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend)
   (Next.js)
 
+## Codebase organization
+The app is organized by domain module, not by file type — everything about
+one feature lives together:
+
+```
+app/modules/<domain>/
+  models.py       # SQLAlchemy models for this domain
+  repository.py   # raw DB queries — the only place that talks to SQLAlchemy directly
+  schemas.py      # Pydantic request/response shapes
+  service.py       # business logic (only where there's real logic beyond CRUD)
+  router.py        # FastAPI routes — thin, calls repository/service
+  tasks.py          # Celery background tasks (auth, transfers only)
+```
+
+Modules: `users`, `auth`, `accounts`, `transactions`, `transfers`, `admin`,
+`audit`. Cross-cutting auth dependencies (`get_current_user`,
+`get_current_admin_user`, `get_current_verified_user`) live in
+`app/core/dependencies.py` — they're used by nearly every module, so they
+don't belong to any single one. `app/core/` also holds config, security
+(JWT/password hashing), and rate limiting; `app/db/` holds the SQLAlchemy
+base and session setup. See PLAN.md section 9 for the full tree.
+
+To find how a feature works end-to-end: open its module folder — e.g.
+everything about transfers (the model, the locking logic, the endpoint,
+the confirmation email task) is in `app/modules/transfers/`.
+
 ## Timeline
 This is a learning project, not a race to launch — no fixed deadline. Built
 incrementally in phases (see PLAN.md), picked up as time allows.
@@ -71,8 +97,8 @@ there).
 ## Status
 
 **All 6 planned phases complete, plus refresh tokens (Phase 7), API
-versioning + repository layer, and email verification/password reset
-(Phase 8).** Every
+versioning, email verification/password reset (Phase 8), and a modular
+codebase reorganization with a real bug-fix pass (Phase 9).** Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
@@ -181,24 +207,11 @@ before deploying:
   by using `NullPool` for the test engine (fresh connection per use,
   never reused across loops).
 
-### API versioning + repository layer
+### API versioning
 - [x] All endpoints now live under `/api/v1` (e.g. `/api/v1/auth/register`).
   The root health check (`/`) stays unversioned — `render.yaml`'s
-  `healthCheckPath` and most infra tooling expect that. This is a breaking
-  URL change; the frontend's PLAN.md contract has been updated to match.
-- [x] Repository layer — `app/repositories/` (`UserRepository`,
-  `AccountRepository`, `TransactionRepository`, `AuditLogRepository`) now
-  holds the raw DB queries that used to live directly in route handlers.
-  Routers call repositories; `transfer_service.py` (business logic +
-  locking) and `audit_service.py` were already separated and are
-  unchanged in behavior — only their internal queries now go through
-  `AccountRepository`/`UserRepository` too. All 21 tests re-verified
-  passing after this refactor, including the transfer-locking and
-  refresh-token-reuse scenarios, to confirm behavior didn't shift.
-
-Not done: a `service.py` layer generalized across every module (transfers/
-audit already have one; the rest currently call repositories directly from
-routers, which is a reasonable stopping point for a project this size).
+  `healthCheckPath` and most infra tooling expect that. This was a breaking
+  URL change; the frontend's PLAN.md contract was updated to match.
 
 ### Phase 8 — Email verification + password reset (post-plan addition)
 Closes a gap found when reviewing the backend for missing standard flows.
@@ -206,13 +219,13 @@ Closes a gap found when reviewing the backend for missing standard flows.
 - [x] `is_verified` flag on `User` (defaults `false`), `EmailVerificationToken`
   model — hashed, single-use, same pattern as `RefreshToken`
 - [x] Registration issues a verification token and queues a mocked
-  "send verification email" Celery task (logs the raw token — matches
-  `transfer_tasks.py`'s pattern; the raw token is never stored, only its hash)
+  "send verification email" Celery task (logs the raw token; the raw
+  token is never stored, only its hash)
 - [x] `POST /auth/verify-email` — verified end-to-end: register → Celery
   logs the token → verify → `is_verified` flips to `true` → reusing the
   same token afterward correctly fails (single-use enforced)
 - [x] **Transfers are gated behind verification** — a real business rule
-  for a payments app, via a new `get_current_verified_user` dependency
+  for a payments app, via a `get_current_verified_user` dependency
   (mirrors `get_current_admin_user`). Unverified users can register and
   log in, but `POST /transfers` returns `403` until they verify. Covered
   by its own test (`test_unverified_user_cannot_send_transfer`).
@@ -226,6 +239,57 @@ Closes a gap found when reviewing the backend for missing standard flows.
   existing session (stolen or not) is killed. Verified live: logged in
   before the reset, confirmed that pre-reset refresh token is dead
   afterward — not just asserted in a comment.
+
+### Phase 9 — Modular reorganization + audit review (post-plan addition)
+The codebase was flat (`app/api/`, `app/models/`, `app/schemas/`,
+`app/repositories/`, `app/services/`, `app/tasks/` — each holding one file
+per *feature* across all domains). Reorganized into
+`app/modules/{users,auth,accounts,transactions,transfers,admin,audit}/`,
+each holding its own `models.py`, `repository.py`, `schemas.py`, and
+`router.py` (plus `service.py`/`tasks.py` where there's real business
+logic beyond CRUD) — so a new dev can open one folder and see everything
+about that domain, instead of hunting across five top-level folders for
+the pieces of one feature. Cross-cutting auth dependencies
+(`get_current_user`, `get_current_admin_user`, `get_current_verified_user`)
+live in `app/core/dependencies.py` since they don't belong to any single
+module.
+
+This was a pure reorganization — no behavior change — verified by:
+running all 22 tests unchanged after the move, and confirming
+`alembic revision --autogenerate` produces an **empty** migration
+(zero schema drift) after relocating every model.
+
+Two real bugs were found and fixed during this review, both about missing
+audit coverage:
+- [x] `transfer_service.py` raised `HTTPException` directly for
+  self-transfer / recipient-not-found / account-not-found, which meant
+  those attempts were **never audit-logged** (only `InsufficientFundsError`
+  was, since the router's `try/except` only caught that one case). Fixed
+  by raising domain exceptions (`SelfTransferError`,
+  `RecipientNotFoundError`, `AccountNotFoundError`) that the router now
+  catches and logs individually. Verified live: all three failure modes
+  now appear in `audit_logs` where two previously didn't.
+- [x] `POST /auth/logout` had no audit trail at all, unlike every other
+  auth action. Added a `log_action` call. Verified live.
+- [x] `POST /auth/verify-email` and `POST /auth/logout` were also missing
+  rate limiting entirely (no `@limiter.limit`), unlike every other auth
+  endpoint. Fixed — verified live that the 11th rapid request to
+  `verify-email` correctly gets `429`.
+- [x] Failed attempts on `verify-email`, `refresh` (the plain
+  invalid/expired case, not just reuse-detection), and
+  `password-reset-confirm` were silently not written to the audit log —
+  only successes and the reuse-detection case were. Fixed to match the
+  pattern already used for `login_failed`.
+
+Also found and fixed, unrelated to the reorg itself:
+- [x] Schema drift: `AuditLog.ip_address` was declared `String(64)` in the
+  model, but the actual migration/DB column was `String(45)` (the correct
+  max length for an IPv6 address string) — the two had been out of sync
+  since Phase 4 and nobody had re-run autogenerate to catch it. Fixed by
+  aligning the model to the DB.
+- [x] `UserResponse` didn't expose `is_verified` at all — the only way a
+  frontend could learn a user's verification status was to get a `403` on
+  a transfer attempt. Added the field.
 
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md
