@@ -5,8 +5,8 @@ FastAPI backend for BridgePay, a learning-project payments platform
 original phased build order.
 
 ## Team
-- **Abednego Ndimu** ([@abednegoingplaces](https://github.com/abednegoingplaces)) — collaborator
 - **Mark Musyoka** ([@Mark-Musyoka](https://github.com/Mark-Musyoka)) — owner
+- **Abednego Ndimu** ([@abednegoingplaces](https://github.com/abednegoingplaces)) — collaborator
 
 ## Tech stack
 - FastAPI (async) + Pydantic
