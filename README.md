@@ -98,8 +98,9 @@ there).
 ## Status
 
 **All 6 planned phases complete, plus refresh tokens (Phase 7), API
-versioning, email verification/password reset (Phase 8), and a modular
-codebase reorganization with a real bug-fix pass (Phase 9).** Every
+versioning, email verification/password reset (Phase 8), a modular
+codebase reorganization with a bug-fix pass (Phase 9), and
+production-readiness fixes (Phase 10).** Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
@@ -292,13 +293,43 @@ Also found and fixed, unrelated to the reorg itself:
   frontend could learn a user's verification status was to get a `403` on
   a transfer attempt. Added the field.
 
+### Phase 10 — Production-readiness fixes
+- [x] **Redis-backed rate limiting** — the limiter previously used
+  in-memory storage (per-process, resets on restart, and wouldn't
+  correctly enforce limits if Render ever runs multiple instances).
+  Switched to Redis (reusing `CELERY_BROKER_URL`, no new dependency
+  needed). Verified the storage is genuinely Redis, not just configured:
+  confirmed real keys exist in Redis (`LIMITS:LIMITER/...`) after hitting
+  a limit, and confirmed `limiter.reset()` (used between tests) actually
+  clears Redis state via `RedisStorage.reset()`, not silently no-op-ing.
+- [x] **`POST /auth/resend-verification`** — closes a real gap: if a
+  verification token expired or the (mocked) email never "arrived",
+  there was previously no way for a user to get a new one short of
+  someone manually flipping `is_verified` in the database. Requires
+  auth (the user can already log in, since verification only gates
+  transfers, not login) — this sidesteps needing the user-enumeration
+  precautions the password-reset-request flow needs. Rejects with `400`
+  if already verified. 6 new tests added, closing a pre-existing gap
+  where verify-email/resend had **zero** automated coverage (only ever
+  manually verified live before). One test's original assumption was
+  wrong and got corrected rather than "fixed" in the app: resending does
+  *not* revoke the previously issued token, and that's fine — unlike
+  refresh tokens, a stale verification link carries no real risk (it can
+  only idempotently confirm the same account), so letting an old link
+  keep working is reasonable, not a bug.
+- [x] **`python-jose` deprecation warning** — every test run showed a
+  `datetime.utcnow()` deprecation warning from inside the library, not
+  our code. Checked whether a newer release fixed it before assuming a
+  library swap was needed: `python-jose` 3.5.0 (up from the pinned 3.3.0)
+  already uses `datetime.now(UTC)` internally — confirmed by downloading
+  and grepping its source before bumping the version. Also set
+  `asyncio_default_fixture_loop_scope = function` in `pytest.ini` to
+  silence an unrelated pytest-asyncio config warning noticed along the
+  way. Full suite now runs with **zero warnings**.
+
 ## Explicitly not built
 - **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md
 - Real payment rail integration (Stripe/Paystack sandbox)
 - Multi-currency conversion
 - Production deployment
 - OAuth/social login (email+password only)
-- Rate limiting on `/auth/password-reset-request` and `/auth/verify-email`
-  uses the same in-memory (per-process) limiter as everything else — see
-  the note in Phase 4 about swapping to Redis-backed limits for a
-  multi-instance deployment

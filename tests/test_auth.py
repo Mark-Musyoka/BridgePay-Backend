@@ -97,3 +97,98 @@ async def test_logout_revokes_refresh_token(client):
 
     reuse_response = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert reuse_response.status_code == 401
+
+
+def _capture_verification_token(monkeypatch):
+    """Verification emails are mocked (queued to Celery, never actually
+    sent) — this captures the raw token from the task call args instead,
+    so tests can complete the verify-email flow without a running worker."""
+    captured = {}
+
+    def fake_delay(to_email, raw_token):
+        captured["token"] = raw_token
+        captured["to_email"] = to_email
+
+    monkeypatch.setattr("app.modules.auth.router.send_verification_email.delay", fake_delay)
+    return captured
+
+
+async def test_verify_email_with_valid_token(client, monkeypatch):
+    captured = _capture_verification_token(monkeypatch)
+    await register(client)
+
+    response = await client.post("/api/v1/auth/verify-email", json={"token": captured["token"]})
+    assert response.status_code == 204
+
+    login_response = await login(client)
+    me_response = await client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {login_response.json()['access_token']}"},
+    )
+    assert me_response.json()["is_verified"] is True
+
+
+async def test_verify_email_with_invalid_token_rejected(client):
+    response = await client.post("/api/v1/auth/verify-email", json={"token": "not-a-real-token"})
+    assert response.status_code == 400
+
+
+async def test_verify_email_token_is_single_use(client, monkeypatch):
+    captured = _capture_verification_token(monkeypatch)
+    await register(client)
+    token = captured["token"]
+
+    first = await client.post("/api/v1/auth/verify-email", json={"token": token})
+    assert first.status_code == 204
+
+    second = await client.post("/api/v1/auth/verify-email", json={"token": token})
+    assert second.status_code == 400
+
+
+async def test_resend_verification_requires_auth(client):
+    response = await client.post("/api/v1/auth/resend-verification")
+    assert response.status_code == 401
+
+
+async def test_resend_verification_issues_a_new_usable_token(client, monkeypatch):
+    captured = _capture_verification_token(monkeypatch)
+    await register(client)
+    original_token = captured["token"]
+
+    login_response = await login(client)
+    access_token = login_response.json()["access_token"]
+
+    resend_response = await client.post(
+        "/api/v1/auth/resend-verification", headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert resend_response.status_code == 204
+    new_token = captured["token"]
+    assert new_token != original_token
+
+    # Unlike refresh tokens, resending a verification email does NOT
+    # revoke the previously issued one — there's no real risk in an old
+    # verification link staying valid (it can only idempotently confirm
+    # the same account, not escalate privilege or leak anything), and
+    # letting old links keep working is reasonable UX. Both the original
+    # and the resent token should work.
+    stale_attempt = await client.post("/api/v1/auth/verify-email", json={"token": original_token})
+    assert stale_attempt.status_code == 204
+
+    # The new token is now moot (account is already verified), but the
+    # endpoint should still respond successfully rather than error.
+    fresh_attempt = await client.post("/api/v1/auth/verify-email", json={"token": new_token})
+    assert fresh_attempt.status_code == 204
+
+
+async def test_resend_verification_rejected_once_already_verified(client, monkeypatch):
+    captured = _capture_verification_token(monkeypatch)
+    await register(client)
+    await client.post("/api/v1/auth/verify-email", json={"token": captured["token"]})
+
+    login_response = await login(client)
+    access_token = login_response.json()["access_token"]
+
+    response = await client.post(
+        "/api/v1/auth/resend-verification", headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert response.status_code == 400

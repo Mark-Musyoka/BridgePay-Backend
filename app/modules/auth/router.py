@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.dependencies import get_current_user
 from app.core.limiter import limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
@@ -29,6 +30,7 @@ from app.modules.auth.service import (
     rotate_refresh_token,
 )
 from app.modules.auth.tasks import send_password_reset_email, send_verification_email
+from app.modules.users.models import User
 from app.modules.users.repository import UserRepository
 from app.modules.users.schemas import UserCreate, UserResponse
 
@@ -83,6 +85,36 @@ async def verify_email(request: Request, payload: VerifyEmailRequest, db: AsyncS
 
     await log_action(db, request=request, action="email_verified")
     await db.commit()
+    return None
+
+
+@router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Issues a fresh verification token for the logged-in user and queues a
+    new (mocked) email. Requires auth rather than taking an email in the
+    body — since login isn't gated on verification, a user who needs this
+    can already log in, so there's no need for the user-enumeration
+    precautions the password-reset-request flow needs.
+    """
+    if current_user.is_verified:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already verified")
+
+    raw_verification_token = await issue_verification_token(db, current_user.id)
+
+    await log_action(db, request=request, action="verification_email_resent", user_id=current_user.id)
+    await db.commit()
+
+    try:
+        send_verification_email.delay(to_email=current_user.email, raw_token=raw_verification_token)
+    except Exception:
+        pass
+
     return None
 
 
