@@ -1,12 +1,13 @@
 # BridgePay Backend
 
-FastAPI backend for BridgePay, a learning-project payments platform
-(PayPal-style). See [PLAN.md](./PLAN.md) for the full architecture and
-original phased build order.
+FastAPI backend for BridgePay — a learning-project PayPal-style payments
+platform (auth, wallets, transfers, admin). See [PLAN.md](./PLAN.md) for the
+full architecture and original phased build order.
 
 ## Team
 - **Mark Musyoka** ([@Mark-Musyoka](https://github.com/Mark-Musyoka)) — owner
 - **Abednego Ndimu** ([@abednegoingplaces](https://github.com/abednegoingplaces)) — collaborator
+- **Antony** ([@Antony-debug-jpg](https://github.com/Antony-debug-jpg)) — collaborator, handling the database and frontend
 
 ## Tech stack
 - FastAPI (async) + Pydantic

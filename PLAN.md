@@ -4,7 +4,8 @@
 This file is the original design; README.md tracks what's actually running.
 
 ## 1. What this is
-A learning-project payments platform (PayPal-style) built by Abednego & Mark.
+A learning-project payments platform (PayPal-style) built by Abednego, Mark
+& Antony (see README.md's Team section for roles).
 Goal: understand how real payment systems work internally — ledgers, transfers,
 auth, and fraud/security patterns — not to launch a production product (yet).
 
