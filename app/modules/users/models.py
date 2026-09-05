@@ -24,6 +24,10 @@ class User(Base):
     # Nullable so existing pre-country-field accounts aren't broken by the
     # migration; new registrations require it (enforced in UserCreate).
     country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # Lazily created on first Stripe interaction (SetupIntent/PaymentIntent) —
+    # see app/modules/payment_methods/service.py. Nullable since most users
+    # will never touch Stripe at all (e.g. M-Pesa-only users in Kenya).
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

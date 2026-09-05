@@ -22,6 +22,29 @@ class Settings(BaseSettings):
     # main.py — so they don't need to be listed here.
     ALLOWED_ORIGINS: str = ""
 
+    # --- Stripe (card deposits, card payouts) ---
+    # Get these from https://dashboard.stripe.com/test/apikeys (test mode
+    # keys start with sk_test_/pk_test_ — use those for everything until
+    # this is genuinely ready for real money).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    # From the webhook endpoint's settings in the Stripe dashboard, used
+    # to verify incoming webhook signatures (see modules/webhooks).
+    STRIPE_WEBHOOK_SECRET: str = ""
+
+    # --- M-Pesa Daraja (STK Push deposits, B2C payouts) ---
+    # Get these from https://developer.safaricom.co.ke — sandbox
+    # credentials are free and instant; production requires a Safaricom
+    # business application/approval process.
+    MPESA_ENV: str = "sandbox"  # "sandbox" or "production"
+    MPESA_CONSUMER_KEY: str = ""
+    MPESA_CONSUMER_SECRET: str = ""
+    MPESA_SHORTCODE: str = ""  # Paybill/till number (STK Push deposits)
+    MPESA_PASSKEY: str = ""  # Lipa Na M-Pesa Online passkey
+    MPESA_INITIATOR_NAME: str = ""  # B2C payouts
+    MPESA_INITIATOR_PASSWORD: str = ""  # B2C payouts (encrypted with the cert Safaricom provides)
+    MPESA_CALLBACK_BASE_URL: str = ""  # this app's own public URL, e.g. https://bridgepay-backend.onrender.com
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]

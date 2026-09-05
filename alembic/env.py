@@ -18,6 +18,7 @@ from app.modules.accounts.models import Account  # noqa: F401
 from app.modules.audit.models import AuditLog  # noqa: F401
 from app.modules.auth.models import EmailVerificationToken, PasswordResetToken, RefreshToken  # noqa: F401
 from app.modules.notifications.models import Notification  # noqa: F401
+from app.modules.payment_methods.models import PaymentMethod  # noqa: F401
 from app.modules.transactions.models import Transaction  # noqa: F401
 from app.modules.users.models import User  # noqa: F401
 
