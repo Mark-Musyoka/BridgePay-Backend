@@ -7,6 +7,8 @@ from app.core.dependencies import get_current_verified_user
 from app.core.limiter import limiter
 from app.db.session import get_db
 from app.modules.audit.service import log_action
+from app.modules.notifications.models import NotificationType
+from app.modules.notifications.service import notify
 from app.modules.transactions.schemas import TransactionResponse
 from app.modules.transfers.schemas import TransferCreate
 from app.modules.transfers.service import (
@@ -18,6 +20,7 @@ from app.modules.transfers.service import (
 )
 from app.modules.transfers.tasks import send_transfer_confirmation
 from app.modules.users.models import User
+from app.modules.users.repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,30 @@ async def create_transfer(
         user_id=current_user.id,
         detail=f"to={payload.to_email} amount={payload.amount} transaction_id={transaction.id}",
     )
+
+    # Recipient is guaranteed to exist here — execute_transfer already
+    # validated this above (RecipientNotFoundError would have fired
+    # otherwise). Re-fetching rather than threading it back from
+    # execute_transfer keeps that function's return type simple.
+    recipient = await UserRepository(db).get_by_email(payload.to_email)
+
+    await notify(
+        db,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        type=NotificationType.transfer_sent,
+        title="Money sent",
+        body=f"You sent {payload.amount} to {payload.to_email}.",
+    )
+    await notify(
+        db,
+        user_id=recipient.id,
+        user_email=recipient.email,
+        type=NotificationType.transfer_received,
+        title="Money received",
+        body=f"You received {payload.amount} from {current_user.email}.",
+    )
+
     await db.commit()
 
     # Fire-and-forget: queues to Celery, doesn't block the HTTP response

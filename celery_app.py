@@ -20,4 +20,5 @@ celery_app.conf.update(
 # Explicit import (rather than autodiscover_tasks, which expects a
 # Django-style app registry) so tasks are reliably registered.
 from app.modules.auth import tasks as auth_tasks  # noqa: E402,F401
+from app.modules.notifications import tasks as notification_tasks  # noqa: E402,F401
 from app.modules.transfers import tasks as transfer_tasks  # noqa: E402,F401
