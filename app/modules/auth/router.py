@@ -52,6 +52,7 @@ async def register(request: Request, payload: UserCreate, db: AsyncSession = Dep
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
+        country=payload.country,
     )
     await AccountRepository(db).create(user_id=user.id)
 

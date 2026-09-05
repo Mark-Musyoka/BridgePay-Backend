@@ -1,7 +1,7 @@
-async def register(client, email="alice@test.dev", password="testpass123", full_name="Alice"):
+async def register(client, email="alice@test.dev", password="testpass123", full_name="Alice", country="KE"):
     return await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": password, "full_name": full_name},
+        json={"email": email, "password": password, "full_name": full_name, "country": country},
     )
 
 
@@ -24,6 +24,31 @@ async def test_register_duplicate_email_rejected(client):
     await register(client)
     response = await register(client)
     assert response.status_code == 400
+
+
+async def test_register_with_invalid_country_code_rejected(client):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "bad-country@test.dev", "password": "testpass123", "full_name": "Bad", "country": "ZZ"},
+    )
+    assert response.status_code == 422
+
+
+async def test_register_lowercases_country_code(client):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "lower@test.dev", "password": "testpass123", "full_name": "Lower", "country": "ke"},
+    )
+    assert response.status_code == 201
+    assert response.json()["country"] == "KE"
+
+
+async def test_public_countries_endpoint_requires_no_auth(client):
+    response = await client.get("/api/v1/countries")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) > 100  # sanity check it's the real ~249-entry list, not empty
+    assert {"code": "KE", "name": "Kenya"} in body
 
 
 async def test_login_wrong_password_rejected(client):

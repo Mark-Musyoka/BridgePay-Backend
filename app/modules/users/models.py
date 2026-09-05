@@ -20,6 +20,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # ISO 3166-1 alpha-2 code (e.g. "KE", "US") — see app/core/countries.py.
+    # Nullable so existing pre-country-field accounts aren't broken by the
+    # migration; new registrations require it (enforced in UserCreate).
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
