@@ -14,6 +14,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.deposits.router import router as deposits_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.payment_methods.router import router as payment_methods_router
+from app.modules.payouts.router import router as payouts_router
 from app.modules.transactions.router import router as transactions_router
 from app.modules.transfers.router import router as transfers_router
 from app.modules.users.router import public_router as users_public_router
@@ -67,6 +68,7 @@ app.include_router(transactions_router, prefix=API_PREFIX)
 app.include_router(notifications_router, prefix=API_PREFIX)
 app.include_router(payment_methods_router, prefix=API_PREFIX)
 app.include_router(deposits_router, prefix=API_PREFIX)
+app.include_router(payouts_router, prefix=API_PREFIX)
 app.include_router(webhooks_router, prefix=API_PREFIX)
 app.include_router(admin_router, prefix=API_PREFIX)
 app.include_router(users_public_router, prefix=API_PREFIX)

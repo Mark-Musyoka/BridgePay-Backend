@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     MPESA_PASSKEY: str = ""  # Lipa Na M-Pesa Online passkey
     MPESA_INITIATOR_NAME: str = ""  # B2C payouts
     MPESA_INITIATOR_PASSWORD: str = ""  # B2C payouts (encrypted with the cert Safaricom provides)
+    MPESA_B2C_CERT_PATH: str = ""  # Path to Safaricom's public cert (.cer) for encrypting the above
     MPESA_CALLBACK_BASE_URL: str = ""  # this app's own public URL, e.g. https://bridgepay-backend.onrender.com
 
     @property

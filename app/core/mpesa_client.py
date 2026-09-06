@@ -88,3 +88,37 @@ def normalize_kenyan_phone(phone: str) -> str:
         raise ValueError(f"'{phone}' does not look like a valid Kenyan mobile number")
 
     return digits
+
+
+def generate_security_credential() -> str:
+    """
+    B2C (and other Daraja transaction-initiating APIs) require a
+    'SecurityCredential': the initiator password encrypted with
+    Safaricom's public certificate (RSA, PKCS1v15 padding, base64
+    encoded) — this is NOT the same as the STK Push password above,
+    which is a different, simpler scheme.
+
+    Needs settings.MPESA_B2C_CERT_PATH pointing at the .cer file
+    Safaricom provides (a shared sandbox cert is published in Daraja's
+    docs; production requires Safaricom's own cert after approval).
+    This is the one piece of M-Pesa integration that genuinely cannot be
+    exercised without that real certificate file in place.
+    """
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.x509 import load_pem_x509_certificate
+
+    if not settings.MPESA_B2C_CERT_PATH:
+        raise RuntimeError(
+            "MPESA_B2C_CERT_PATH is not configured — B2C payouts need Safaricom's "
+            "public certificate file. See https://developer.safaricom.co.ke for the "
+            "sandbox cert, or your production approval for the live one."
+        )
+
+    with open(settings.MPESA_B2C_CERT_PATH, "rb") as f:
+        cert_data = f.read()
+
+    certificate = load_pem_x509_certificate(cert_data)
+    public_key = certificate.public_key()
+
+    encrypted = public_key.encrypt(settings.MPESA_INITIATOR_PASSWORD.encode(), padding.PKCS1v15())
+    return base64.b64encode(encrypted).decode()
