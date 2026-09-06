@@ -34,13 +34,17 @@ app/modules/<domain>/
   tasks.py          # Celery background tasks (auth, transfers only)
 ```
 
-Modules: `users`, `auth`, `accounts`, `transactions`, `transfers`, `admin`,
-`audit`. Cross-cutting auth dependencies (`get_current_user`,
+Modules: `users`, `auth`, `accounts`, `transactions`, `transfers`,
+`notifications`, `payment_methods`, `deposits`, `payouts`, `webhooks`,
+`admin`, `audit`. Cross-cutting auth dependencies (`get_current_user`,
 `get_current_admin_user`, `get_current_verified_user`) live in
 `app/core/dependencies.py` — they're used by nearly every module, so they
 don't belong to any single one. `app/core/` also holds config, security
-(JWT/password hashing), and rate limiting; `app/db/` holds the SQLAlchemy
-base and session setup. See PLAN.md section 9 for the full tree.
+(JWT/password hashing), rate limiting, the country list, and the shared
+Stripe/M-Pesa client primitives (`stripe_client.py`, `mpesa_client.py`)
+that `payment_methods`/`deposits`/`payouts` all build on; `app/db/` holds
+the SQLAlchemy base and session setup. See PLAN.md section 9 for the
+full tree.
 
 To find how a feature works end-to-end: open its module folder — e.g.
 everything about transfers (the model, the locking logic, the endpoint,
@@ -99,8 +103,9 @@ there).
 
 **All 6 planned phases complete, plus refresh tokens (Phase 7), API
 versioning, email verification/password reset (Phase 8), a modular
-codebase reorganization with a bug-fix pass (Phase 9), and
-production-readiness fixes (Phase 10).** Every
+codebase reorganization with a bug-fix pass (Phase 9),
+production-readiness fixes (Phase 10), and country/notifications/
+settings/real Stripe+M-Pesa payments (Phase 11).** Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
@@ -327,9 +332,76 @@ Also found and fixed, unrelated to the reorg itself:
   silence an unrelated pytest-asyncio config warning noticed along the
   way. Full suite now runs with **zero warnings**.
 
+### Phase 11 — Country, notifications, settings, and real payments (Stripe + M-Pesa)
+The biggest addition since the initial 6-phase plan — a `country` field,
+an in-app+email notification system, account settings, and genuinely
+real (not mocked) Stripe and M-Pesa integration for linking payment
+methods, depositing funds, and sending real external payouts.
+
+- **`country`** — ISO 3166-1 alpha-2, required + validated at
+  registration, nullable at the DB level for backward compatibility. A
+  public `GET /countries` (249 entries) backs the signup dropdown.
+- **Notifications** (`app/modules/notifications/`) — a single `notify()`
+  entry point every other module calls into. Always creates the in-app
+  row first (the source of truth), then queues a mocked email alongside
+  it. Wired into transfers, deposits, and payouts.
+- **Settings** — `PATCH /users/me` (changing email resets `is_verified`
+  and re-triggers the verification flow to the NEW address; rejects a
+  duplicate email), `POST /users/me/change-password` (requires the
+  current password, revokes every refresh token afterward — a password
+  change is a signal worth killing existing sessions over, whether it
+  was the user's own doing or they're locking down a compromised
+  account).
+- **PaymentMethod** (`app/modules/payment_methods/`) — real Stripe card
+  linking via SetupIntent (the card number itself never touches this
+  backend — Stripe holds it, we store only its `pm_...` id and masked
+  display details) and real M-Pesa phone linking (no gateway call needed
+  for linking itself — Daraja has no "saved payment method" concept, the
+  phone number is used directly at deposit/payout time).
+- **Deposits** (`app/modules/deposits/`) — real Stripe PaymentIntents and
+  real M-Pesa STK Push. The account balance is **only ever credited when
+  a webhook confirms success**, never optimistically at request time,
+  since both providers are asynchronous. Both webhook handlers are
+  idempotent (checked against `deposit.status` before crediting), so a
+  redelivered webhook — which both providers do by design — is a safe
+  no-op, not a double-credit. A client-supplied idempotency key means a
+  retried deposit request returns the same PaymentIntent rather than
+  creating a second charge.
+- **External payouts** (`app/modules/payouts/`) — real M-Pesa B2C and
+  real Stripe card payouts. Money genuinely leaves the platform here,
+  per an explicit product decision (not an internal transfer tagged by
+  method). The sender's balance is deducted **up front**, before the
+  external API call, using the same locking discipline as transfers —
+  and reversed (credited back, via a second immutable Transaction, never
+  editing the original) if the payout then fails, whether that failure
+  is discovered synchronously (the API call itself errors) or
+  asynchronously (a result callback / `payout.failed` webhook reports
+  failure after initially looking fine).
+
+**What's genuinely untested against live endpoints:** none of the above
+Stripe/M-Pesa integration has been exercised against real sandbox
+credentials — I don't have any. External SDK/HTTP calls are mocked via
+monkeypatch in tests; what IS verified for real is everything around
+those calls: locking, balance math, idempotency, webhook redelivery
+safety, and the deduct-then-reverse payout logic. The one piece flagged
+as most likely to need adjustment once real credentials are available:
+Stripe's `method="instant"` card payout requires the account to have
+Instant Payouts capability enabled, which isn't automatic.
+
+**Deliberately scoped out, not overlooked:** raw bank-account-number
+payouts (as opposed to a card token) — the required fields (routing
+number, account type, etc.) vary by country and weren't specified, so
+this was left out rather than guessed at. Airtel Money was mentioned
+early on as a "nice to have" alongside M-Pesa but was never chosen as a
+gateway to actually build.
+
 ## Explicitly not built
-- **PaymentMethod** (mocked card/bank linking) — out of scope for now, see PLAN.md
-- Real payment rail integration (Stripe/Paystack sandbox)
-- Multi-currency conversion
+- Real bank-account-number payouts (see Phase 11 note above) — card
+  token and M-Pesa phone payouts are built; a raw bank account/routing
+  number flow is not
+- Airtel Money integration
+- Multi-currency conversion (each payout method is scoped to its own
+  native currency — no cross-currency conversion logic)
+- Google OAuth / social login (email+password only — planned as a
+  follow-up, see https://developers.google.com/identity/protocols/oauth2)
 - Production deployment
-- OAuth/social login (email+password only)
