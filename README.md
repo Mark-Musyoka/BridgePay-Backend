@@ -51,8 +51,11 @@ everything about transfers (the model, the locking logic, the endpoint,
 the confirmation email task) is in `app/modules/transfers/`.
 
 ## Timeline
-This is a learning project, not a race to launch — no fixed deadline. Built
-incrementally in phases (see PLAN.md), picked up as time allows.
+Started as a learning project with no fixed deadline — now targeting a
+launch by **Friday, September 18, 2026**. The backend is functionally
+complete (see Status below); remaining work between now and launch is
+mostly frontend (which is being rebuilt to match everything the backend
+now supports) plus real credential setup and deployment.
 
 ## Related repo
 This is the backend only. The frontend client lives in a separate repo:
