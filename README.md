@@ -104,8 +104,9 @@ there).
 **All 6 planned phases complete, plus refresh tokens (Phase 7), API
 versioning, email verification/password reset (Phase 8), a modular
 codebase reorganization with a bug-fix pass (Phase 9),
-production-readiness fixes (Phase 10), and country/notifications/
-settings/real Stripe+M-Pesa payments (Phase 11).** Every
+production-readiness fixes (Phase 10), country/notifications/settings/
+real Stripe+M-Pesa payments (Phase 11), and Google OAuth (Phase 12).**
+Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
 real transfers, triggered rate limits, confirmed worker output — not just
@@ -395,6 +396,43 @@ this was left out rather than guessed at. Airtel Money was mentioned
 early on as a "nice to have" alongside M-Pesa but was never chosen as a
 gateway to actually build.
 
+### Phase 12 — Google OAuth (Sign in with Google)
+The standard authorization-code flow
+(https://developers.google.com/identity/protocols/oauth2/web-server),
+with one deliberate addition: `GET /auth/google/callback` never puts a
+real access/refresh token in its redirect URL (that would end up in
+browser history, server logs, and `Referer` headers) — it issues a
+short-lived (60s), single-use handoff code instead, and the frontend
+exchanges that via `POST /auth/google/exchange` for real tokens over a
+request body. Same hashed, single-use token pattern used everywhere
+else in this codebase.
+
+- `User.hashed_password` is now nullable (a Google-only account has
+  none at all) — `login()` explicitly checks for `None` before calling
+  `verify_password`, rather than crashing.
+- Signing in with Google on an email that already has a password-based
+  account **links** Google onto it and upgrades `is_verified` to true —
+  safe to do without extra steps, since Google has already proven the
+  person controls that email via its own consent screen.
+- A brand new Google sign-in creates an account with no password,
+  `is_verified=true` immediately, and `country` left `null` (Google
+  doesn't reliably provide this — filled in later via `PATCH /users/me`).
+- CSRF-protected via a short-lived httpOnly state cookie set on
+  `/auth/google/login` and checked on `/auth/google/callback`.
+- Rejects Google accounts reporting `email_verified: false`.
+
+No real Google OAuth credentials available to test against Google's
+actual endpoints — the two HTTP calls (`exchange_code_for_tokens`,
+`get_google_user_info`) are mocked via monkeypatch. What IS verified for
+real: a live boot test confirming `GET /auth/google/login` produces a
+correctly-formed, complete authorization URL. 8 tests cover the rest:
+state-mismatch rejection, new-account creation, unverified-email
+rejection, account linking (verification upgraded, original password
+untouched), handoff code exchange (and that it's genuinely single-use —
+a second exchange attempt correctly fails), and the specific crash this
+could have caused — password login against a Google-only account —
+correctly returning 401 instead of a 500.
+
 ## Explicitly not built
 - Real bank-account-number payouts (see Phase 11 note above) — card
   token and M-Pesa phone payouts are built; a raw bank account/routing
@@ -402,6 +440,4 @@ gateway to actually build.
 - Airtel Money integration
 - Multi-currency conversion (each payout method is scoped to its own
   native currency — no cross-currency conversion logic)
-- Google OAuth / social login (email+password only — planned as a
-  follow-up, see https://developers.google.com/identity/protocols/oauth2)
 - Production deployment
