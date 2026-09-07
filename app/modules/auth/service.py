@@ -15,9 +15,11 @@ from app.core.security import (
     hash_password,
     hash_refresh_token,
 )
+from app.modules.accounts.repository import AccountRepository
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.repository import (
     EmailVerificationTokenRepository,
+    OAuthHandoffCodeRepository,
     PasswordResetTokenRepository,
     RefreshTokenRepository,
 )
@@ -42,6 +44,10 @@ class EmailVerificationTokenInvalid(Exception):
 
 
 class PasswordResetTokenInvalid(Exception):
+    pass
+
+
+class OAuthHandoffCodeInvalid(Exception):
     pass
 
 
@@ -165,3 +171,75 @@ async def confirm_password_reset(db: AsyncSession, raw_token: str, new_password:
     # risk — kill every existing session (refresh token) so a stolen
     # session doesn't survive the password change.
     await revoke_all_for_user(db, user.id)
+
+
+# --- Google OAuth handoff (see OAuthHandoffCode's docstring) ---------------
+
+OAUTH_HANDOFF_CODE_EXPIRE_SECONDS = 60
+
+
+async def issue_oauth_handoff_code(db: AsyncSession, user_id) -> str:
+    raw_code = generate_refresh_token()  # same high-entropy generator, different purpose
+    await OAuthHandoffCodeRepository(db).create(
+        user_id=user_id,
+        code_hash=hash_refresh_token(raw_code),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=OAUTH_HANDOFF_CODE_EXPIRE_SECONDS),
+    )
+    return raw_code
+
+
+async def consume_oauth_handoff_code(db: AsyncSession, raw_code: str) -> str:
+    """Returns the user_id (as a string) if valid, and marks it used —
+    single-use, same as every other token in this module."""
+    code_hash = hash_refresh_token(raw_code)
+    stored = await OAuthHandoffCodeRepository(db).get_by_hash(code_hash)
+
+    if stored is None or stored.used or stored.expires_at < datetime.now(timezone.utc):
+        raise OAuthHandoffCodeInvalid("Invalid or expired OAuth handoff code")
+
+    stored.used = True
+    await db.flush()
+    return str(stored.user_id)
+
+
+async def find_or_create_google_user(db: AsyncSession, *, email: str, full_name: str, google_id: str):
+    """
+    Three cases:
+    1. An account already has this exact google_id — same person signing
+       in again. Just return it.
+    2. An account exists with this email but no google_id yet — link
+       Google onto it. Safe to do without any extra verification step:
+       Google has already proven the person controls this email address
+       via its own OAuth consent flow, which is at least as strong a
+       proof as our own email-verification-link flow. Also upgrades
+       is_verified to true if it wasn't already, for the same reason.
+    3. No account with this email at all — create a brand new one, no
+       password (Google-only), is_verified=true immediately, country
+       left unset (Google doesn't reliably provide this — the user can
+       fill it in later via PATCH /users/me), plus the usual Account
+       every new user gets.
+    """
+    user_repo = UserRepository(db)
+
+    existing_by_google_id = await user_repo.get_by_google_id(google_id)
+    if existing_by_google_id is not None:
+        return existing_by_google_id
+
+    existing_by_email = await user_repo.get_by_email(email)
+    if existing_by_email is not None:
+        existing_by_email.google_id = google_id
+        existing_by_email.is_verified = True
+        await db.flush()
+        return existing_by_email
+
+    new_user = await user_repo.create(
+        email=email,
+        full_name=full_name,
+        country=None,
+        hashed_password=None,
+        google_id=google_id,
+    )
+    new_user.is_verified = True  # Google already verified this email
+    await AccountRepository(db).create(user_id=new_user.id)
+    await db.flush()
+    return new_user

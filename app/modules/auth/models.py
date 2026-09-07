@@ -68,3 +68,34 @@ class PasswordResetToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class OAuthHandoffCode(Base):
+    """
+    Bridges the gap between /auth/google/callback (a browser redirect,
+    where putting real JWTs in the URL would mean they end up in browser
+    history, server logs, and Referer headers) and the frontend actually
+    receiving usable tokens. The callback issues one of these — a random
+    code, single-use, expires in ~60 seconds — and redirects the browser
+    to the frontend with just that code in the URL. The frontend then
+    POSTs it to /auth/google/exchange, which issues REAL access/refresh
+    tokens only at that point, over a request body rather than a URL.
+
+    Same hashed, single-use pattern as the other token tables here — the
+    raw code only ever exists in the redirect URL and the frontend's
+    exchange request, never stored anywhere in plaintext.
+    """
+    __tablename__ = "oauth_handoff_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

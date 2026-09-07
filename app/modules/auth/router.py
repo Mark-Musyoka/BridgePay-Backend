@@ -1,14 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user
+from app.core.google_client import (
+    build_authorization_url,
+    exchange_code_for_tokens,
+    generate_oauth_state,
+    get_google_user_info,
+)
 from app.core.limiter import limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.modules.accounts.repository import AccountRepository
 from app.modules.audit.service import log_action
 from app.modules.auth.schemas import (
+    GoogleExchangeRequest,
     LogoutRequest,
     PasswordResetConfirmSchema,
     PasswordResetRequestSchema,
@@ -18,11 +27,15 @@ from app.modules.auth.schemas import (
 )
 from app.modules.auth.service import (
     EmailVerificationTokenInvalid,
+    OAuthHandoffCodeInvalid,
     PasswordResetTokenInvalid,
     RefreshTokenInvalid,
     RefreshTokenReused,
     confirm_password_reset,
     confirm_verification_token,
+    consume_oauth_handoff_code,
+    find_or_create_google_user,
+    issue_oauth_handoff_code,
     issue_refresh_token,
     issue_verification_token,
     request_password_reset,
@@ -125,7 +138,11 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
     # OAuth2PasswordRequestForm uses "username" as the field name; we treat it as email.
     user = await UserRepository(db).get_by_email(form_data.username)
 
-    if user is None or not verify_password(form_data.password, user.hashed_password):
+    if user is None or user.hashed_password is None or not verify_password(form_data.password, user.hashed_password):
+        # user.hashed_password is None for a Google-only account — same
+        # generic 401 as any other failed login, rather than a 500 crash
+        # or a message that reveals the account exists and how it auths
+        # (that's information an attacker could use to enumerate accounts).
         await log_action(
             db,
             request=request,
@@ -223,3 +240,121 @@ async def password_reset_confirm(
     await log_action(db, request=request, action="password_reset_completed")
     await db.commit()
     return None
+
+
+# --- Google OAuth (Sign in with Google) -------------------------------
+# See https://developers.google.com/identity/protocols/oauth2/web-server
+# for the flow this implements.
+
+OAUTH_STATE_COOKIE = "bp_oauth_state"
+
+
+@router.get("/google/login")
+@limiter.limit("10/minute")
+async def google_login(request: Request):
+    """
+    Redirects the browser straight to Google's consent screen — meant to
+    be navigated to directly (e.g. an <a href>), not fetched via JS,
+    since the whole point is a full-page redirect through Google and
+    back.
+    """
+    state = generate_oauth_state()
+    response = RedirectResponse(url=build_authorization_url(state), status_code=status.HTTP_302_FOUND)
+    # Short-lived, httpOnly — this cookie only needs to survive the round
+    # trip to Google's consent screen and back to our own /callback, to
+    # prove the request completing the flow is the same browser that
+    # started it (CSRF protection for the OAuth flow itself).
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state,
+        max_age=300,
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+    )
+    return response
+
+
+@router.get("/google/callback")
+async def google_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Google redirects here after the user approves (or denies) access.
+    On success, redirects the browser onward to the frontend's own
+    completion page with a short-lived, single-use handoff code — see
+    OAuthHandoffCode's docstring for why real tokens never appear in
+    this URL.
+    """
+    if error:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_OAUTH_COMPLETE_URL}?error={error}", status_code=status.HTTP_302_FOUND
+        )
+
+    cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
+    if not code or not state or not cookie_state or state != cookie_state:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_OAUTH_COMPLETE_URL}?error=invalid_state",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    try:
+        token_data = await exchange_code_for_tokens(code)
+        user_info = await get_google_user_info(token_data["access_token"])
+
+        if not user_info.get("email_verified", False):
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_OAUTH_COMPLETE_URL}?error=email_not_verified",
+                status_code=status.HTTP_302_FOUND,
+            )
+
+        user = await find_or_create_google_user(
+            db,
+            email=user_info["email"],
+            full_name=user_info.get("name", user_info["email"]),
+            google_id=user_info["sub"],
+        )
+
+        await log_action(db, request=request, action="google_login_success", user_id=user.id)
+        handoff_code = await issue_oauth_handoff_code(db, user.id)
+        await db.commit()
+
+    except Exception:
+        await db.rollback()
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_OAUTH_COMPLETE_URL}?error=google_auth_failed",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    response = RedirectResponse(
+        url=f"{settings.FRONTEND_OAUTH_COMPLETE_URL}?code={handoff_code}",
+        status_code=status.HTTP_302_FOUND,
+    )
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    return response
+
+
+@router.post("/google/exchange", response_model=Token)
+@limiter.limit("10/minute")
+async def google_exchange(
+    request: Request, payload: GoogleExchangeRequest, db: AsyncSession = Depends(get_db)
+):
+    """
+    The frontend's Google-login completion page calls this with the
+    handoff code from the callback redirect's query string.
+    """
+    try:
+        user_id = await consume_oauth_handoff_code(db, payload.code)
+    except OAuthHandoffCodeInvalid:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired code")
+
+    access_token = create_access_token(subject=user_id)
+    refresh_token = await issue_refresh_token(db, user_id)
+    await db.commit()
+
+    return Token(access_token=access_token, refresh_token=refresh_token)

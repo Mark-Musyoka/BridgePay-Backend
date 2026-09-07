@@ -15,7 +15,16 @@ class User(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable — a Google-only account has no password at all. Never
+    # assume this is set; login() explicitly checks for None and rejects
+    # password login with a clear message rather than crashing on it.
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Google's stable per-account id ('sub' claim). Set the first time
+    # this email authenticates via Google — whether that's a brand new
+    # account or linking Google onto an existing password-based one
+    # (safe to do: Google has already proven the person controls this
+    # email, via its own OAuth flow).
+    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

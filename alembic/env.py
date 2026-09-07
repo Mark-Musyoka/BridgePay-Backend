@@ -16,7 +16,7 @@ from app.db.base import Base
 # Import models here as they're added, so Alembic's autogenerate can see them.
 from app.modules.accounts.models import Account  # noqa: F401
 from app.modules.audit.models import AuditLog  # noqa: F401
-from app.modules.auth.models import EmailVerificationToken, PasswordResetToken, RefreshToken  # noqa: F401
+from app.modules.auth.models import EmailVerificationToken, OAuthHandoffCode, PasswordResetToken, RefreshToken  # noqa: F401
 from app.modules.deposits.models import Deposit  # noqa: F401
 from app.modules.notifications.models import Notification  # noqa: F401
 from app.modules.payment_methods.models import PaymentMethod  # noqa: F401

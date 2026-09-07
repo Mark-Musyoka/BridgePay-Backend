@@ -19,6 +19,10 @@ class VerifyEmailRequest(BaseModel):
     token: str
 
 
+class GoogleExchangeRequest(BaseModel):
+    code: str = Field(description="The handoff code from /auth/google/callback's redirect, NOT a Google code")
+
+
 class PasswordResetRequestSchema(BaseModel):
     email: EmailStr
 

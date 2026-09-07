@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     MPESA_B2C_CERT_PATH: str = ""  # Path to Safaricom's public cert (.cer) for encrypting the above
     MPESA_CALLBACK_BASE_URL: str = ""  # this app's own public URL, e.g. https://bridgepay-backend.onrender.com
 
+    # --- Google OAuth (Sign in with Google) ---
+    # Get these from https://console.cloud.google.com/apis/credentials —
+    # register GOOGLE_REDIRECT_URI there EXACTLY (Google rejects any
+    # mismatch), pointed at this backend's own /auth/google/callback,
+    # e.g. https://bridgepay-backend.onrender.com/api/v1/auth/google/callback
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = ""
+    # Where to send the browser after a successful Google login, with a
+    # short-lived handoff code — the frontend's own page that exchanges
+    # it for real tokens. e.g. https://bridgepay.app/auth/google/complete
+    FRONTEND_OAUTH_COMPLETE_URL: str = ""
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
