@@ -5,20 +5,25 @@ platform (auth, wallets, transfers, admin). See [PLAN.md](./PLAN.md) for the
 full architecture and original phased build order.
 
 ## Team
-- **Mark Musyoka** ([@Mark-Musyoka](https://github.com/Mark-Musyoka)) — owner
-- **Abednego Ndimu** ([@abednegoingplaces](https://github.com/abednegoingplaces)) — collaborator
-- **Franklin Tumaini** ([@Antony-debug-jpg](https://github.com/Antony-debug-jpg)) — collaborator, handling the database and frontend
+| Name | GitHub | Role |
+|---|---|---|
+| Mark Musyoka | [@Mark-Musyoka](https://github.com/Mark-Musyoka) | Owner |
+| Abednego Ndimu | [@abednegoingplaces](https://github.com/abednegoingplaces) | Collaborator |
+| Franklin Tumaini | [@Antony-debug-jpg](https://github.com/Antony-debug-jpg) | Collaborator — database and frontend |
 
 ## Tech stack
-- FastAPI (async) + Pydantic
-- SQLAlchemy 2.0 (async) + Alembic migrations
-- Postgres (Neon)
-- Celery + Redis for background jobs
-- JWT auth (python-jose), bcrypt for password hashing
-- Rate limiting (slowapi)
-- Deployed on Render
-- Paired with [BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend)
-  (Next.js)
+| Layer | Choice |
+|---|---|
+| Framework | FastAPI (async) + Pydantic |
+| ORM / migrations | SQLAlchemy 2.0 (async) + Alembic |
+| Database | Postgres (Neon) |
+| Background jobs | Celery + Redis |
+| Auth | JWT (python-jose), bcrypt for password hashing |
+| Rate limiting | slowapi, Redis-backed |
+| Payments | Stripe (cards) + M-Pesa Daraja (STK Push, B2C) |
+| OAuth | Google (Sign in with Google) |
+| Deployment | Render |
+| Paired with | [BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend) (Next.js) |
 
 ## Codebase organization
 The app is organized by domain module, not by file type — everything about
@@ -34,17 +39,29 @@ app/modules/<domain>/
   tasks.py          # Celery background tasks (auth, transfers only)
 ```
 
-Modules: `users`, `auth`, `accounts`, `transactions`, `transfers`,
-`notifications`, `payment_methods`, `deposits`, `payouts`, `webhooks`,
-`admin`, `audit`. Cross-cutting auth dependencies (`get_current_user`,
-`get_current_admin_user`, `get_current_verified_user`) live in
-`app/core/dependencies.py` — they're used by nearly every module, so they
-don't belong to any single one. `app/core/` also holds config, security
-(JWT/password hashing), rate limiting, the country list, and the shared
-Stripe/M-Pesa client primitives (`stripe_client.py`, `mpesa_client.py`)
-that `payment_methods`/`deposits`/`payouts` all build on; `app/db/` holds
-the SQLAlchemy base and session setup. See PLAN.md section 9 for the
-full tree.
+| Module | What it owns |
+|---|---|
+| `users` | User model/profile, `PATCH /users/me`, change password, `GET /countries` |
+| `auth` | Register/login/refresh/logout, email verification, password reset, Google OAuth |
+| `accounts` | Wallet balance |
+| `transactions` | The shared immutable ledger (read by transfers, deposits, payouts) |
+| `transfers` | Internal user-to-user transfers, row-locking logic |
+| `notifications` | In-app + mocked email notifications, `notify()` called from every other module |
+| `payment_methods` | Real Stripe card linking, real M-Pesa phone linking |
+| `deposits` | Real Stripe + M-Pesa deposits, webhook-driven crediting |
+| `payouts` | Real M-Pesa B2C + Stripe card payouts, deduct-first/reverse-on-failure |
+| `webhooks` | Stripe + M-Pesa webhook endpoints (no models of its own) |
+| `admin` | Admin-only transaction/audit-log views |
+| `audit` | The audit log, `log_action()` called from every other module |
+
+Cross-cutting auth dependencies (`get_current_user`, `get_current_admin_user`,
+`get_current_verified_user`) live in `app/core/dependencies.py` — used by
+nearly every module, so they don't belong to any single one. `app/core/`
+also holds config, security (JWT/password hashing), rate limiting, the
+country list, and the shared Stripe/M-Pesa/Google client primitives that
+`payment_methods`/`deposits`/`payouts`/`auth` all build on; `app/db/`
+holds the SQLAlchemy base and session setup. See PLAN.md section 9 for
+the full tree.
 
 To find how a feature works end-to-end: open its module folder — e.g.
 everything about transfers (the model, the locking logic, the endpoint,
@@ -437,10 +454,9 @@ could have caused — password login against a Google-only account —
 correctly returning 401 instead of a 500.
 
 ## Explicitly not built
-- Real bank-account-number payouts (see Phase 11 note above) — card
-  token and M-Pesa phone payouts are built; a raw bank account/routing
-  number flow is not
-- Airtel Money integration
-- Multi-currency conversion (each payout method is scoped to its own
-  native currency — no cross-currency conversion logic)
-- Production deployment
+| Item | Why |
+|---|---|
+| Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank account/routing number flow isn't — the required fields vary by country and weren't specified (see Phase 11) |
+| Airtel Money integration | Mentioned early on as a "nice to have" alongside M-Pesa, never chosen as a gateway to actually build |
+| Multi-currency conversion | Each payout method is scoped to its own native currency — no cross-currency conversion logic |
+| Production deployment | Backend is deploy-ready; the actual deployment hasn't happened yet |
