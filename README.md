@@ -70,9 +70,10 @@ the confirmation email task) is in `app/modules/transfers/`.
 ## Timeline
 Started as a learning project with no fixed deadline — now targeting a
 launch by **Friday, September 18, 2026**. The backend is functionally
-complete (see Status below); remaining work between now and launch is
-mostly frontend (which is being rebuilt to match everything the backend
-now supports) plus real credential setup and deployment.
+complete (see Status below); real Stripe/M-Pesa/Google credentials are
+configured locally. Remaining work between now and launch is mostly
+frontend (which is being rebuilt to match everything the backend now
+supports) plus deployment.
 
 ## Related repo
 This is the backend only. The frontend client lives in a separate repo:
