@@ -102,7 +102,7 @@ async def test_stripe_webhook_credits_account_on_success(client, monkeypatch):
         lambda **kw: _fake_payment_intent(id="pi_webhook_test"),
     )
     monkeypatch.setattr(
-        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        "app.modules.webhooks.service.stripe.Webhook.construct_event",
         lambda payload, sig, secret: {
             "type": "payment_intent.succeeded",
             "data": {"object": {"id": "pi_webhook_test"}},
@@ -140,7 +140,7 @@ async def test_stripe_webhook_is_idempotent_on_redelivery(client, monkeypatch):
         lambda **kw: _fake_payment_intent(id="pi_redelivered"),
     )
     monkeypatch.setattr(
-        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        "app.modules.webhooks.service.stripe.Webhook.construct_event",
         lambda payload, sig, secret: {
             "type": "payment_intent.succeeded",
             "data": {"object": {"id": "pi_redelivered"}},
@@ -168,7 +168,7 @@ async def test_stripe_webhook_rejects_bad_signature(client, monkeypatch):
     def raise_sig_error(payload, sig, secret):
         raise stripe_sdk.error.SignatureVerificationError("bad sig", sig)
 
-    monkeypatch.setattr("app.modules.webhooks.router.stripe.Webhook.construct_event", raise_sig_error)
+    monkeypatch.setattr("app.modules.webhooks.service.stripe.Webhook.construct_event", raise_sig_error)
 
     response = await client.post(
         "/api/v1/webhooks/stripe", headers={"stripe-signature": "wrong"}, json={}
@@ -321,7 +321,7 @@ async def test_stripe_deposit_records_exchange_rate_and_converted_amount(client,
         lambda **kw: _fake_payment_intent(id="pi_convert_test"),
     )
     monkeypatch.setattr(
-        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        "app.modules.webhooks.service.stripe.Webhook.construct_event",
         lambda payload, sig, secret: {
             "type": "payment_intent.succeeded",
             "data": {"object": {"id": "pi_convert_test"}},
@@ -368,7 +368,7 @@ async def test_deposit_marked_failed_when_exchange_rate_unavailable(client, monk
         lambda **kw: _fake_payment_intent(id="pi_rate_down"),
     )
     monkeypatch.setattr(
-        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        "app.modules.webhooks.service.stripe.Webhook.construct_event",
         lambda payload, sig, secret: {
             "type": "payment_intent.succeeded",
             "data": {"object": {"id": "pi_rate_down"}},

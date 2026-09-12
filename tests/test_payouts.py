@@ -309,7 +309,7 @@ async def test_stripe_payout_failed_webhook_reverses_a_completed_payout(client, 
         lambda **kw: _fake_stripe_payout(id="po_later_fails", status="pending"),
     )
     monkeypatch.setattr(
-        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        "app.modules.webhooks.service.stripe.Webhook.construct_event",
         lambda payload, sig, secret: {
             "type": "payout.failed",
             "data": {"object": {"id": "po_later_fails", "failure_message": "Card closed"}},
