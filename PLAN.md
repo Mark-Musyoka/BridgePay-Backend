@@ -122,12 +122,21 @@ multi-currency deposit/payout conversion) all happened after this
 original 8-item build order — see README.md for the complete, dated
 history of each.
 
-## 8. Explicitly out of scope for now
-| Item | Why |
-|---|---|
-| Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank routing/account number flow isn't — format varies by country and wasn't specified |
-| Airtel Money integration | Never chosen as a gateway to actually build |
-| Production deployment / real user data | Not yet deployed |
+## 8. Way forward (next up, in priority order)
+The three items originally deferred out of Phase 11 were Airtel Money,
+bank-account payouts, and multi-currency conversion — see that phase's
+README writeup. Multi-currency conversion (Phase 13) is now done; these
+two remain:
+
+| # | Item | Notes |
+|---|---|---|
+| 1 | Airtel Money integration | STK-style push deposit/payout, same shape as the existing M-Pesa module (`airtel_client.py`, deposit/payout endpoints, webhooks) |
+| 2 | Bank-account payouts | Kenyan account number + bank code, and international IBAN/SWIFT — likely via Stripe bank-account tokens; required fields vary by country so this needs its own schema per region rather than reusing the card-token flow |
+
+After those: production deployment (backend is deploy-ready — see
+`Dockerfile`/`render.yaml` — the actual deployment hasn't happened yet)
+and the frontend rebuild to match everything the backend now supports.
+See README's Timeline for the current target date.
 
 ## 9. Folder structure (as built — reorganized into modules in Phase 9,
 see README.md for the full rationale and the audit-review bug fixes that
@@ -237,3 +246,37 @@ BridgePay-Backend/
   PLAN.md
   README.md
 ```
+
+## 10. Architecture notes: why some modules have fewer files
+Every module follows the same layering — `models.py` (table),
+`repository.py` (DB queries), `schemas.py` (request/response shapes),
+`service.py` (business logic), `router.py` (HTTP layer) — but not every
+module needs all five. A module skips a layer only when there's
+genuinely nothing to put in it, never as a shortcut:
+
+- **`accounts`, `transactions`** — no `service.py`. Each has exactly one
+  read-only endpoint (`GET /accounts/me`, `GET /transactions`) with no
+  business logic beyond "fetch and paginate" — the router calls the
+  repository directly. A service layer here would just be a pass-through
+  wrapper around the repository call.
+- **`transfers`** — no `models.py`/`repository.py`. It doesn't own a
+  table; it moves money between `Account` rows and writes `Transaction`
+  rows, both of which belong to their own modules. Introducing a
+  transfers-specific model or repo would mean duplicating the
+  accounts/transactions data access instead of reusing it.
+- **`admin`** — no `schemas.py`/`service.py`/`repository.py`. It's a
+  read-only reporting layer over other modules' data (transactions,
+  audit logs), reusing their repositories and response schemas directly.
+  No new data or business rule originates here.
+- **`webhooks`** — only `router.py`. It's a dispatcher: verify the
+  signature, then call into `deposits`/`payouts` services, which own the
+  actual state changes. It has no model or business logic of its own.
+- **`audit`** — no `router.py`. Audit log rows are written from inside
+  other modules' request flows (`log_action()`, called from `transfers`,
+  auth failures, etc.) and read back out through `admin`'s endpoints —
+  there's no reason for `audit` to expose its own HTTP surface too.
+
+Verified as of Phase 13: every endpoint documented in § 5 (API surface)
+exists in code and is registered in `app/main.py`; no stub functions,
+`TODO`s, or `NotImplementedError`s anywhere in `app/modules/`.
+

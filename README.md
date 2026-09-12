@@ -493,5 +493,7 @@ for a wallet's deposit/payout conversion, not a trading system.
 | Item | Why |
 |---|---|
 | Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank account/routing number flow isn't — the required fields vary by country and weren't specified (see Phase 11) |
-| Airtel Money integration | Mentioned early on as a "nice to have" alongside M-Pesa, never chosen as a gateway to actually build |
+| Airtel Money integration | Now approved and planned — see PLAN.md's Way forward section — just not built yet |
 | Production deployment | Backend is deploy-ready; the actual deployment hasn't happened yet |
+
+See PLAN.md § 8 (Way forward) for what's next, in priority order.
