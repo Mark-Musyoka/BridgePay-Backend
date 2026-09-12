@@ -21,6 +21,8 @@ class DepositRepository:
         currency: str,
         external_reference: str,
         idempotency_key: str | None = None,
+        exchange_rate=None,
+        converted_amount=None,
     ) -> Deposit:
         deposit = Deposit(
             user_id=user_id,
@@ -30,6 +32,8 @@ class DepositRepository:
             currency=currency,
             external_reference=external_reference,
             idempotency_key=idempotency_key,
+            exchange_rate=exchange_rate,
+            converted_amount=converted_amount,
         )
         self.db.add(deposit)
         await self.db.flush()
@@ -57,6 +61,15 @@ class DepositRepository:
         )
         items = items_result.scalars().all()
         return items, total
+
+    async def set_conversion(self, deposit: Deposit, *, exchange_rate, converted_amount) -> None:
+        """Records the rate applied and the resulting account-currency
+        amount at the point the deposit is actually credited — see
+        _credit_account_and_record in service.py. Left unset (both stay
+        NULL) when the deposit's currency already matches the account's."""
+        deposit.exchange_rate = exchange_rate
+        deposit.converted_amount = converted_amount
+        await self.db.flush()
 
     async def mark_completed(self, deposit: Deposit) -> None:
         deposit.status = DepositStatus.completed

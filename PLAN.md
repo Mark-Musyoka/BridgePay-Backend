@@ -1,10 +1,11 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-12 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-13 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
-fixes, real Stripe+M-Pesa payments, Google OAuth) — see README.md for
-verified detail.** This file is the original design plus a running
-contract reference; README.md tracks what's actually running and tested.
+fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
+conversion) — see README.md for verified detail.** This file is the
+original design plus a running contract reference; README.md tracks
+what's actually running and tested.
 
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego, Mark
@@ -36,7 +37,7 @@ history*, not a stored number you update in place.
 This is the single most important lesson of the project — it's how every real
 payment system (and accounting system) avoids "money disappearing" bugs.
 
-## 4. Data models (v1, now well beyond v1 — see README Phases 7-12)
+## 4. Data models (v1, now well beyond v1 — see README Phases 7-13)
 | Model | Key fields |
 |---|---|
 | `User` | id, email, hashed_password (nullable — null for Google-only accounts), full_name, country (ISO alpha-2, nullable), is_active, is_admin, is_verified, google_id (nullable), stripe_customer_id (nullable), created_at |
@@ -46,8 +47,8 @@ payment system (and accounting system) avoids "money disappearing" bugs.
 | `RefreshToken` / `EmailVerificationToken` / `PasswordResetToken` / `OAuthHandoffCode` | All hashed, single-use tokens, same pattern |
 | `Notification` | id, user_id, type, title, body, is_read, created_at |
 | `PaymentMethod` | id, user_id, provider (stripe/mpesa), type (card/mobile_wallet), external_reference, masked_details, is_default |
-| `Deposit` | id, user_id, account_id, provider, status, amount, currency, external_reference, idempotency_key, failure_reason |
-| `Payout` | id, user_id, account_id, provider, destination_reference, recipient_email, amount, currency, status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason |
+| `Deposit` | id, user_id, account_id, provider, status, amount, currency, exchange_rate (nullable), converted_amount (nullable), external_reference, idempotency_key, failure_reason |
+| `Payout` | id, user_id, account_id, provider, destination_reference, recipient_email, amount, currency, exchange_rate (nullable), converted_amount (nullable), status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason |
 
 Built: **PaymentMethod** — real Stripe card linking + real M-Pesa phone
 linking. See README Phase 11 for full detail; no longer out of scope.
@@ -114,18 +115,18 @@ linking. See README Phase 11 for full detail; no longer out of scope.
 | 7 | Celery integration — background task for "send transfer confirmation" (mocked) | [x] |
 | 8 | Admin view — see all transactions, flag suspicious ones | [x] |
 
-Phases 7-12 (refresh tokens, API versioning, email verification/password
-reset, the modular reorg, production-readiness fixes, and the full
-country/notifications/settings/payments/Google-OAuth feature set) all
-happened after this original 8-item build order — see README.md for the
-complete, dated history of each.
+Phases 7-13 (refresh tokens, API versioning, email verification/password
+reset, the modular reorg, production-readiness fixes, the full
+country/notifications/settings/payments/Google-OAuth feature set, and
+multi-currency deposit/payout conversion) all happened after this
+original 8-item build order — see README.md for the complete, dated
+history of each.
 
 ## 8. Explicitly out of scope for now
 | Item | Why |
 |---|---|
 | Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank routing/account number flow isn't — format varies by country and wasn't specified |
 | Airtel Money integration | Never chosen as a gateway to actually build |
-| Multi-currency conversion | Each payout method stays in its own native currency |
 | Production deployment / real user data | Not yet deployed |
 
 ## 9. Folder structure (as built — reorganized into modules in Phase 9,

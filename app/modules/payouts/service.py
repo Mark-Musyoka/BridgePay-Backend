@@ -5,6 +5,7 @@ import httpx
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.mpesa_client import (
     current_timestamp,
     generate_security_credential,
@@ -43,12 +44,15 @@ async def _get_user(db, user_id: uuid.UUID) -> User:
     return result.scalar_one()
 
 
-async def _deduct_balance_and_record(db, *, account_id: uuid.UUID, amount: Decimal, currency: str) -> None:
+async def _deduct_balance_and_record(
+    db, *, account_id: uuid.UUID, amount: Decimal, currency: str
+) -> tuple[Decimal, Decimal, str]:
     """
     The core safety-critical step, shared by both providers: lock the
-    account, verify sufficient funds, deduct — done UP FRONT, before any
-    external API call, and BEFORE the Payout row's external_reference is
-    even known.
+    account, convert amount/currency into the account's own currency if
+    they differ, verify sufficient funds, deduct — done UP FRONT, before
+    any external API call, and BEFORE the Payout row's external_reference
+    is even known.
 
     Why deduct first rather than after the payout succeeds: the external
     call can take real time (a network round-trip to Safaricom/Stripe),
@@ -58,26 +62,40 @@ async def _deduct_balance_and_record(db, *, account_id: uuid.UUID, amount: Decim
     exists to prevent, applied here to money leaving the platform rather
     than moving between two accounts. If the external call subsequently
     fails, _reverse_deduction below undoes exactly this.
+
+    Previously this deducted `amount` directly regardless of currency —
+    fine for M-Pesa (always KES, matching the account default) but wrong
+    the moment a Stripe payout was requested in a non-account currency:
+    it deducted the raw foreign-currency number as if it were KES.
+
+    Returns (converted_amount, exchange_rate, account_currency) so the
+    caller can decide whether a conversion actually happened (compare
+    `currency` to account_currency) and, if so, persist it on the
+    Payout row once that row exists.
     """
     account_repo = AccountRepository(db)
     account = await account_repo.get_by_id_locked(account_id)
 
-    if account.balance < amount:
+    converted_amount, exchange_rate = await convert(amount, currency, account.currency)
+
+    if account.balance < converted_amount:
         raise InsufficientFundsError("Insufficient funds")
 
-    account.balance -= amount
+    account.balance -= converted_amount
 
     transaction = Transaction(
         from_account_id=account.id,
         to_account_id=None,
-        amount=amount,
-        currency=currency,
+        amount=converted_amount,
+        currency=account.currency,
         status=TransactionStatus.completed,
         type=TransactionType.withdrawal,
         reference_note="External payout",
     )
     db.add(transaction)
     await db.flush()
+
+    return converted_amount, exchange_rate, account.currency
 
 
 async def _reverse_deduction(db, *, payout: Payout, reason: str) -> None:
@@ -90,16 +108,24 @@ async def _reverse_deduction(db, *, payout: Payout, reason: str) -> None:
     writes a second, separate Transaction (the ledger is immutable — a
     correction is a new opposite entry, never an edit to the original
     deduction), marks the payout reversed, and notifies the user.
+
+    Credits back payout.converted_amount (the account-currency amount
+    that was actually deducted) when a conversion happened, falling back
+    to payout.amount when it didn't — never payout.amount unconditionally,
+    which would credit back the wrong figure whenever the payout's
+    currency differs from the account's.
     """
     account_repo = AccountRepository(db)
     account = await account_repo.get_by_id_locked(payout.account_id)
-    account.balance += payout.amount
+
+    amount_to_credit = payout.converted_amount if payout.converted_amount is not None else payout.amount
+    account.balance += amount_to_credit
 
     reversal_transaction = Transaction(
         from_account_id=None,
         to_account_id=account.id,
-        amount=payout.amount,
-        currency=payout.currency,
+        amount=amount_to_credit,
+        currency=account.currency,
         status=TransactionStatus.completed,
         type=TransactionType.deposit,
         reference_note=f"Reversal of failed payout {payout.id}",
@@ -149,7 +175,10 @@ async def create_mpesa_payout(
     # Deduct FIRST — see _deduct_balance_and_record's docstring for why.
     # Raises InsufficientFundsError before anything else happens if the
     # sender can't cover it, same as transfers/service.py.
-    await _deduct_balance_and_record(db, account_id=account_id, amount=amount, currency="KES")
+    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+        db, account_id=account_id, amount=amount, currency="KES"
+    )
+    conversion_happened = "KES" != account_currency.upper()
 
     payout = await payout_repo.create(
         user_id=user.id,
@@ -160,6 +189,8 @@ async def create_mpesa_payout(
         amount=amount,
         currency="KES",
         idempotency_key=idempotency_key,
+        exchange_rate=exchange_rate if conversion_happened else None,
+        converted_amount=converted_amount if conversion_happened else None,
     )
 
     try:
@@ -257,7 +288,10 @@ async def create_stripe_card_payout(
         if existing is not None:
             return existing
 
-    await _deduct_balance_and_record(db, account_id=account_id, amount=amount, currency=currency.upper())
+    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+        db, account_id=account_id, amount=amount, currency=currency.upper()
+    )
+    conversion_happened = currency.upper() != account_currency.upper()
 
     payout = await payout_repo.create(
         user_id=user.id,
@@ -268,6 +302,8 @@ async def create_stripe_card_payout(
         amount=amount,
         currency=currency.upper(),
         idempotency_key=idempotency_key,
+        exchange_rate=exchange_rate if conversion_happened else None,
+        converted_amount=converted_amount if conversion_happened else None,
     )
 
     amount_in_smallest_unit = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)

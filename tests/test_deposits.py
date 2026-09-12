@@ -8,6 +8,18 @@ from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 
 
+def _fake_convert(rate=Decimal("2")):
+    """Deterministic stand-in for app.core.exchange_rate_client.convert —
+    avoids a real network call to Frankfurter in tests, and makes the
+    converted amount predictable to assert on. Same-currency pairs still
+    short-circuit to a 1:1 rate, matching the real implementation."""
+    async def _convert(amount, from_currency, to_currency):
+        if from_currency.upper() == to_currency.upper():
+            return amount, Decimal("1")
+        return amount * rate, rate
+    return _convert
+
+
 async def _auth(client, email="dep-user@test.dev", full_name="Dep User"):
     await register(client, email=email, full_name=full_name)
     login_response = await login(client, email=email)
@@ -96,6 +108,7 @@ async def test_stripe_webhook_credits_account_on_success(client, monkeypatch):
             "data": {"object": {"id": "pi_webhook_test"}},
         },
     )
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _auth(client, email="webhook-user@test.dev")
     await client.post(
@@ -112,8 +125,10 @@ async def test_stripe_webhook_credits_account_on_success(client, monkeypatch):
     )
     assert webhook_response.status_code == 200
 
+    # Account is KES by default, deposit was USD — credited amount is the
+    # converted (75.00 * rate 2 = 150.00) figure, not the raw 75.00.
     balance_after = await _get_balance("webhook-user@test.dev")
-    assert balance_after == Decimal("75.00")
+    assert balance_after == Decimal("150.00")
 
 
 async def test_stripe_webhook_is_idempotent_on_redelivery(client, monkeypatch):
@@ -131,6 +146,7 @@ async def test_stripe_webhook_is_idempotent_on_redelivery(client, monkeypatch):
             "data": {"object": {"id": "pi_redelivered"}},
         },
     )
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _auth(client, email="redelivery-user@test.dev")
     await client.post(
@@ -143,7 +159,7 @@ async def test_stripe_webhook_is_idempotent_on_redelivery(client, monkeypatch):
     await client.post("/api/v1/webhooks/stripe", headers={"stripe-signature": "fake"}, json={})  # redelivered
 
     balance = await _get_balance("redelivery-user@test.dev")
-    assert balance == Decimal("20.00")  # NOT 40.00 — the second delivery must be a no-op
+    assert balance == Decimal("40.00")  # 20.00 * rate 2 — NOT 80.00, the second delivery must be a no-op
 
 
 async def test_stripe_webhook_rejects_bad_signature(client, monkeypatch):
@@ -289,3 +305,97 @@ async def test_mpesa_callback_marks_failed_on_cancellation(client, monkeypatch):
 
 async def _async_return(value):
     return value
+
+
+# --- Multi-currency conversion -------------------------------------------
+
+async def test_stripe_deposit_records_exchange_rate_and_converted_amount(client, monkeypatch):
+    """A deposit made in a currency other than the account's (KES by
+    default) should be converted before crediting, and the applied rate
+    plus the converted figure should be persisted on the Deposit row."""
+    monkeypatch.setattr(
+        "app.modules.payment_methods.service.stripe.Customer.create", lambda **kw: _fake_customer()
+    )
+    monkeypatch.setattr(
+        "app.modules.deposits.service.stripe.PaymentIntent.create",
+        lambda **kw: _fake_payment_intent(id="pi_convert_test"),
+    )
+    monkeypatch.setattr(
+        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        lambda payload, sig, secret: {
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_convert_test"}},
+        },
+    )
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("130")))
+
+    token = await _auth(client, email="convert-user@test.dev")
+    create_response = await client.post(
+        "/api/v1/deposits/stripe",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"amount": "10.00", "currency": "usd"},
+    )
+    deposit_id = create_response.json()["deposit_id"]
+
+    await client.post("/api/v1/webhooks/stripe", headers={"stripe-signature": "fake"}, json={})
+
+    balance = await _get_balance("convert-user@test.dev")
+    assert balance == Decimal("1300.00")  # 10.00 USD * rate 130
+
+    from app.modules.deposits.models import Deposit
+
+    async with TestSessionLocal() as session:
+        deposit = (await session.execute(select(Deposit).where(Deposit.id == deposit_id))).scalar_one()
+        assert deposit.exchange_rate == Decimal("130")
+        assert deposit.converted_amount == Decimal("1300.00")
+        assert deposit.amount == Decimal("10.00")  # original figure preserved, untouched
+
+
+async def test_deposit_marked_failed_when_exchange_rate_unavailable(client, monkeypatch):
+    """If the conversion rate can't be fetched, the deposit must not
+    silently credit the wrong amount (or crash) — it's marked failed and
+    no funds move."""
+    from app.core.exchange_rate_client import ExchangeRateUnavailable
+
+    async def _broken_convert(amount, from_currency, to_currency):
+        raise ExchangeRateUnavailable("rate service down")
+
+    monkeypatch.setattr(
+        "app.modules.payment_methods.service.stripe.Customer.create", lambda **kw: _fake_customer()
+    )
+    monkeypatch.setattr(
+        "app.modules.deposits.service.stripe.PaymentIntent.create",
+        lambda **kw: _fake_payment_intent(id="pi_rate_down"),
+    )
+    monkeypatch.setattr(
+        "app.modules.webhooks.router.stripe.Webhook.construct_event",
+        lambda payload, sig, secret: {
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_rate_down"}},
+        },
+    )
+    monkeypatch.setattr("app.modules.deposits.service.convert", _broken_convert)
+
+    token = await _auth(client, email="rate-down-user@test.dev")
+    create_response = await client.post(
+        "/api/v1/deposits/stripe",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"amount": "10.00", "currency": "usd"},
+    )
+    deposit_id = create_response.json()["deposit_id"]
+
+    webhook_response = await client.post(
+        "/api/v1/webhooks/stripe", headers={"stripe-signature": "fake"}, json={}
+    )
+    assert webhook_response.status_code == 200  # webhook itself still ack's cleanly
+
+    balance = await _get_balance("rate-down-user@test.dev")
+    assert balance == Decimal("0.00")  # nothing credited
+
+    from app.modules.deposits.models import Deposit, DepositStatus
+
+    async with TestSessionLocal() as session:
+        deposit = (await session.execute(select(Deposit).where(Deposit.id == deposit_id))).scalar_one()
+        assert deposit.status == DepositStatus.failed
+        assert "Currency conversion failed" in deposit.failure_reason
+

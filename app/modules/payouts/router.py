@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_verified_user
+from app.core.exchange_rate_client import ExchangeRateUnavailable
 from app.core.limiter import limiter
 from app.db.session import get_db
 from app.modules.accounts.repository import AccountRepository
@@ -55,6 +56,11 @@ async def payout_via_mpesa(
     except InsufficientFundsError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
+    except ExchangeRateUnavailable as e:
+        # Fails inside _deduct_balance_and_record, before any external
+        # API call — nothing to reverse, a plain rollback is enough.
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except InvalidPhoneNumber as e:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
@@ -92,6 +98,9 @@ async def payout_via_stripe_card(
     except InsufficientFundsError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
+    except ExchangeRateUnavailable as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except StripePayoutFailed as e:
         await db.commit()  # reversal already happened, commit it
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))

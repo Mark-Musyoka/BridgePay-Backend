@@ -57,6 +57,15 @@ class Payout(Base):
     recipient_email: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    # Populated only when currency differs from the source account's
+    # currency (see _deduct_balance_and_record in service.py). exchange_rate
+    # is units of account currency per unit of `currency`; converted_amount
+    # is amount * exchange_rate, i.e. what actually gets deducted from (and,
+    # on reversal, credited back to) the account, and recorded on the
+    # Transaction. Both stay NULL for a payout made directly in the
+    # account's own currency — nothing was converted.
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    converted_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     # M-Pesa: ConversationID from the B2C request. Stripe: Payout id
     # (po_...). How an async result/webhook finds its way back here.
     external_reference: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)

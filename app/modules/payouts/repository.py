@@ -23,6 +23,8 @@ class PayoutRepository:
         currency: str,
         external_reference: str | None = None,
         idempotency_key: str | None = None,
+        exchange_rate=None,
+        converted_amount=None,
     ) -> Payout:
         payout = Payout(
             user_id=user_id,
@@ -34,10 +36,22 @@ class PayoutRepository:
             currency=currency,
             external_reference=external_reference,
             idempotency_key=idempotency_key,
+            exchange_rate=exchange_rate,
+            converted_amount=converted_amount,
         )
         self.db.add(payout)
         await self.db.flush()
         return payout
+
+    async def set_conversion(self, payout: Payout, *, exchange_rate, converted_amount) -> None:
+        """Records the rate applied and the resulting account-currency
+        amount at the point the payout's balance deduction actually
+        happens — see _deduct_balance_and_record in service.py. Left
+        unset (both stay NULL) when the payout's currency already
+        matches the account's."""
+        payout.exchange_rate = exchange_rate
+        payout.converted_amount = converted_amount
+        await self.db.flush()
 
     async def get_by_external_reference(self, external_reference: str) -> Payout | None:
         result = await self.db.execute(select(Payout).where(Payout.external_reference == external_reference))

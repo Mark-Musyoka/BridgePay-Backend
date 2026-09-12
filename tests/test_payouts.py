@@ -9,6 +9,18 @@ from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 
 
+def _fake_convert(rate=Decimal("2")):
+    """Deterministic stand-in for app.core.exchange_rate_client.convert —
+    avoids a real network call to Frankfurter in tests, and makes the
+    converted amount predictable to assert on. Same-currency pairs still
+    short-circuit to a 1:1 rate, matching the real implementation."""
+    async def _convert(amount, from_currency, to_currency):
+        if from_currency.upper() == to_currency.upper():
+            return amount, Decimal("1")
+        return amount * rate, rate
+    return _convert
+
+
 async def _verified_auth(client, email="payout-user@test.dev", full_name="Payout User"):
     await register(client, email=email, full_name=full_name)
     async with TestSessionLocal() as session:
@@ -227,6 +239,7 @@ async def test_stripe_card_payout_success(client, monkeypatch):
     monkeypatch.setattr(
         "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
     )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _verified_auth(client, email="stripe-payout@test.dev")
     await _fund("stripe-payout@test.dev", "500.00")
@@ -239,8 +252,10 @@ async def test_stripe_card_payout_success(client, monkeypatch):
     assert response.status_code == 201
     assert response.json()["status"] == "completed"
 
+    # Payout currency defaults to USD, account is KES — 100.00 USD * rate 2
+    # = 200.00 KES actually deducted, not the raw 100.00.
     balance = await _get_balance("stripe-payout@test.dev")
-    assert balance == Decimal("400.00")
+    assert balance == Decimal("300.00")
 
 
 async def test_stripe_card_payout_reverses_on_immediate_failure(client, monkeypatch):
@@ -248,6 +263,7 @@ async def test_stripe_card_payout_reverses_on_immediate_failure(client, monkeypa
         "app.modules.payouts.service.stripe.Payout.create",
         lambda **kw: _fake_stripe_payout(status="failed"),
     )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _verified_auth(client, email="stripe-payout-fail@test.dev")
     await _fund("stripe-payout-fail@test.dev", "500.00")
@@ -271,6 +287,7 @@ async def test_stripe_card_payout_reverses_on_stripe_exception(client, monkeypat
         raise stripe_sdk.error.CardError("Card declined", None, "card_declined")
 
     monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", raise_error)
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _verified_auth(client, email="stripe-payout-exc@test.dev")
     await _fund("stripe-payout-exc@test.dev", "500.00")
@@ -298,6 +315,7 @@ async def test_stripe_payout_failed_webhook_reverses_a_completed_payout(client, 
             "data": {"object": {"id": "po_later_fails", "failure_message": "Card closed"}},
         },
     )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
 
     token = await _verified_auth(client, email="stripe-late-fail@test.dev")
     await _fund("stripe-late-fail@test.dev", "500.00")
@@ -308,7 +326,8 @@ async def test_stripe_payout_failed_webhook_reverses_a_completed_payout(client, 
         json={"card_token": "tok_visa", "recipient_email": "someone@test.dev", "amount": "100.00"},
     )
     assert create_response.json()["status"] == "completed"
-    assert await _get_balance("stripe-late-fail@test.dev") == Decimal("400.00")
+    # 100.00 USD * rate 2 = 200.00 KES actually deducted
+    assert await _get_balance("stripe-late-fail@test.dev") == Decimal("300.00")
 
     webhook_response = await client.post(
         "/api/v1/webhooks/stripe", headers={"stripe-signature": "fake"}, json={}
@@ -316,7 +335,72 @@ async def test_stripe_payout_failed_webhook_reverses_a_completed_payout(client, 
     assert webhook_response.status_code == 200
 
     final_balance = await _get_balance("stripe-late-fail@test.dev")
-    assert final_balance == Decimal("500.00")  # reversed after the fact
+    assert final_balance == Decimal("500.00")  # reversed after the fact, back to the original
+
+
+# --- Multi-currency conversion -------------------------------------------
+
+async def test_stripe_payout_records_exchange_rate_and_converted_amount(client, monkeypatch):
+    """A payout requested in a currency other than the account's (KES by
+    default) should be converted before deducting, and the applied rate
+    plus the converted figure should be persisted on the Payout row."""
+    monkeypatch.setattr(
+        "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
+    )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("130")))
+
+    token = await _verified_auth(client, email="payout-convert@test.dev")
+    await _fund("payout-convert@test.dev", "5000.00")
+
+    response = await client.post(
+        "/api/v1/payouts/stripe-card",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"card_token": "tok_visa", "recipient_email": "someone@test.dev", "amount": "10.00"},
+    )
+    assert response.status_code == 201
+    payout_id = response.json()["id"]
+
+    balance = await _get_balance("payout-convert@test.dev")
+    assert balance == Decimal("3700.00")  # 5000.00 - (10.00 USD * rate 130)
+
+    from app.modules.payouts.models import Payout
+
+    async with TestSessionLocal() as session:
+        payout = (await session.execute(select(Payout).where(Payout.id == payout_id))).scalar_one()
+        assert payout.exchange_rate == Decimal("130")
+        assert payout.converted_amount == Decimal("1300.00")
+        assert payout.amount == Decimal("10.00")  # original figure preserved, untouched
+
+
+async def test_payout_rejected_when_exchange_rate_unavailable(client, monkeypatch):
+    """If the conversion rate can't be fetched, the payout must not go
+    ahead with a wrong deduction — it's rejected before any external
+    gateway call, and the sender's balance is untouched."""
+    from app.core.exchange_rate_client import ExchangeRateUnavailable
+
+    async def _broken_convert(amount, from_currency, to_currency):
+        raise ExchangeRateUnavailable("rate service down")
+
+    gateway_calls = []
+    monkeypatch.setattr(
+        "app.modules.payouts.service.stripe.Payout.create",
+        lambda **kw: (gateway_calls.append(1), _fake_stripe_payout())[1],
+    )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _broken_convert)
+
+    token = await _verified_auth(client, email="payout-rate-down@test.dev")
+    await _fund("payout-rate-down@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/stripe-card",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"card_token": "tok_visa", "recipient_email": "someone@test.dev", "amount": "100.00"},
+    )
+    assert response.status_code == 503
+    assert len(gateway_calls) == 0  # never even reached the gateway
+
+    balance = await _get_balance("payout-rate-down@test.dev")
+    assert balance == Decimal("500.00")  # untouched
 
 
 class _FakeResponse:

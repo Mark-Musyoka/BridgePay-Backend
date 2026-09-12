@@ -12,6 +12,7 @@ from app.core.mpesa_client import (
     get_base_url,
     normalize_kenyan_phone,
 )
+from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.stripe_client import stripe
 from app.modules.accounts.repository import AccountRepository
 from app.modules.deposits.models import Deposit, DepositProvider
@@ -37,24 +38,57 @@ async def _get_user(db, user_id: uuid.UUID) -> User:
 
 async def _credit_account_and_record(db, *, deposit: Deposit) -> None:
     """
-    Shared completion path for both providers: lock the account, credit
-    it, write the immutable Transaction row, mark the deposit completed,
-    and notify — all inside the caller's DB transaction (flush, not
-    commit; the router/webhook handler commits).
+    Shared completion path for both providers: lock the account, convert
+    the deposit into the account's own currency if they differ, credit
+    it, write the immutable Transaction row (in the account's currency —
+    it's a ledger of what actually moved through the account, not of
+    what the depositor typed in), mark the deposit completed, and notify
+    — all inside the caller's DB transaction (flush, not commit; the
+    router/webhook handler commits).
 
     Only ever called after a webhook confirms success — never
     optimistically when the deposit is first created, since the money
     isn't actually there yet at that point for either provider.
+
+    Previously this credited deposit.amount directly regardless of
+    currency — fine for M-Pesa (always KES, matching the account
+    default) but wrong the moment a Stripe deposit came in in a
+    non-account currency: it credited the raw foreign-currency number as
+    if it were KES.
     """
     account_repo = AccountRepository(db)
     account = await account_repo.get_by_id_locked(deposit.account_id)
-    account.balance += deposit.amount
+
+    try:
+        converted_amount, exchange_rate = await convert(deposit.amount, deposit.currency, account.currency)
+    except ExchangeRateUnavailable as e:
+        await DepositRepository(db).mark_failed(deposit, reason=f"Currency conversion failed: {e}")
+        user = await _get_user(db, deposit.user_id)
+        await notify(
+            db,
+            user_id=deposit.user_id,
+            user_email=user.email,
+            type=NotificationType.deposit_failed,
+            title="Deposit failed",
+            body=(
+                f"Your deposit of {deposit.amount} {deposit.currency} could not be completed: "
+                "a currency conversion rate was unavailable. No funds were charged."
+            ),
+        )
+        return
+
+    account.balance += converted_amount
+
+    if deposit.currency.upper() != account.currency.upper():
+        await DepositRepository(db).set_conversion(
+            deposit, exchange_rate=exchange_rate, converted_amount=converted_amount
+        )
 
     transaction = Transaction(
         from_account_id=None,
         to_account_id=account.id,
-        amount=deposit.amount,
-        currency=deposit.currency,
+        amount=converted_amount,
+        currency=account.currency,
         status=TransactionStatus.completed,
         type=TransactionType.deposit,
         reference_note=f"{deposit.provider.value} deposit",
