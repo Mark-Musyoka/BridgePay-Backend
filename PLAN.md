@@ -160,7 +160,11 @@ BridgePay-Backend/
       countries.py          # static ISO 3166-1 country list
       stripe_client.py       # shared Stripe SDK config
       mpesa_client.py         # shared Daraja OAuth/STK/B2C primitives
-      google_client.py         # shared Google OAuth primitives
+      airtel_client.py         # shared Airtel Open API OAuth/Collections/
+                                # Disbursement primitives (Phase 15)
+      exchange_rate_client.py   # Frankfurter API client, hourly rate cache
+                                 # (Phase 13)
+      google_client.py           # shared Google OAuth primitives
     db/
       base.py
       session.py
@@ -187,15 +191,24 @@ BridgePay-Backend/
         models.py           # Account
         repository.py
         schemas.py
-        router.py            # GET /accounts/me
+        service.py            # get_my_account (Phase 14 — router no longer
+                               # calls the repository directly)
+        router.py              # GET /accounts/me
       transactions/
         models.py           # Transaction (shared with transfers/deposits/payouts)
         repository.py
         schemas.py
-        router.py            # GET /transactions
+        service.py            # list_my_transactions, composes accounts.service
+                               # (Phase 14)
+        router.py              # GET /transactions
       transfers/
+        repository.py         # account-locking + ledger write, extracted out
+                               # of service.py (Phase 14) — no models.py of
+                               # its own, see § 10
         schemas.py
-        service.py            # execute_transfer — the row-locking logic
+        service.py            # execute_transfer — the business rules
+                               # (self-transfer, recipient lookup, insufficient
+                               # funds); row-locking now lives in repository.py
         tasks.py               # mocked send_transfer_confirmation
         router.py               # POST /transfers
       notifications/
@@ -216,29 +229,41 @@ BridgePay-Backend/
         models.py           # Deposit
         repository.py
         schemas.py
-        service.py            # real Stripe PaymentIntent + M-Pesa STK Push,
-                               # webhook-driven crediting, idempotent
+        service.py            # real Stripe PaymentIntent + M-Pesa STK Push +
+                               # Airtel Collections (Phase 15), webhook-driven
+                               # crediting, currency-converted (Phase 13),
+                               # idempotent
         router.py             # /deposits/*
       payouts/
         models.py           # Payout
         repository.py
         schemas.py
-        service.py            # real M-Pesa B2C + Stripe card payouts,
-                               # deduct-first/reverse-on-failure
+        service.py            # real M-Pesa B2C + Stripe card + Airtel
+                               # Disbursement payouts (Phase 15),
+                               # deduct-first/reverse-on-failure,
+                               # currency-converted (Phase 13)
         router.py             # /payouts/*
       webhooks/
-        router.py            # /webhooks/stripe, /webhooks/mpesa/*
-                              # (no models/service of its own — calls into
-                              # deposits/payouts services)
+        schemas.py           # WebhookAckResponse, DarajaAckResponse,
+                              # AirtelAckResponse
+        service.py            # signature verification + event dispatch,
+                               # extracted out of the router (Phase 14)
+        router.py              # /webhooks/stripe, /webhooks/mpesa/*,
+                                # /webhooks/airtel/* (Phase 15)
+                                # (no models/repository of its own, see § 10)
       admin/
-        router.py            # GET /admin/transactions, /admin/audit-logs
-                              # (reads across accounts/transactions/audit/users,
-                              # no models of its own)
+        repository.py        # composes accounts/users/transactions/audit
+                              # repositories (Phase 14)
+        schemas.py             # re-exports the response shapes it reuses
+        service.py              # the email-filter business rule
+        router.py                # GET /admin/transactions, /admin/audit-logs
+                                  # (no models.py of its own, see § 10)
       audit/
         models.py           # AuditLog
         repository.py
         schemas.py
         service.py            # log_action — called from every other module
+                              # (no router.py of its own, see § 10)
     main.py
   alembic/
   tests/
@@ -274,8 +299,10 @@ except where a layer would genuinely have nothing in it:
 | `admin` | ❌ | ✅ | ✅ | ✅ | ✅ | No table — read-only reporting layer composing other modules' repositories |
 | `audit` | ✅ | ✅ | ✅ | ✅ | ❌ | No router — logs are written from other modules' request flows and already read back via `GET /admin/audit-logs`; a second endpoint would duplicate it |
 
-Verified as of Phase 14: every endpoint in § 5 (API surface) exists in
-code and is registered in `app/main.py`; no stub functions, `TODO`s, or
+Verified as of Phase 14, still holding through Phase 15 (Airtel Money
+was purely additive within existing modules — no module gained or lost
+a layer): every endpoint in § 5 (API surface) exists in code and is
+registered in `app/main.py`; no stub functions, `TODO`s, or
 `NotImplementedError`s anywhere in `app/modules/`; the reasoning for
 each ❌ above is also left as a comment in that module's `__init__.py`.
 
