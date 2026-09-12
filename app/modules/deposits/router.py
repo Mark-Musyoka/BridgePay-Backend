@@ -7,6 +7,8 @@ from app.db.session import get_db
 from app.modules.accounts.repository import AccountRepository
 from app.modules.deposits.repository import DepositRepository
 from app.modules.deposits.schemas import (
+    AirtelDepositCreate,
+    AirtelDepositResponse,
     DepositListResponse,
     MpesaDepositCreate,
     MpesaDepositResponse,
@@ -14,8 +16,10 @@ from app.modules.deposits.schemas import (
     StripeDepositResponse,
 )
 from app.modules.deposits.service import (
+    AirtelRequestFailed,
     InvalidPhoneNumber,
     MpesaRequestFailed,
+    create_airtel_deposit,
     create_mpesa_deposit,
     create_stripe_deposit,
 )
@@ -81,6 +85,36 @@ async def deposit_via_mpesa(
 
     await db.commit()
     return MpesaDepositResponse(deposit_id=deposit_id)
+
+
+@router.post("/airtel", response_model=AirtelDepositResponse)
+@limiter.limit("10/minute")
+async def deposit_via_airtel(
+    request: Request,
+    payload: AirtelDepositCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_id = await _get_own_account_id(db, current_user)
+
+    try:
+        deposit_id = await create_airtel_deposit(
+            db,
+            user=current_user,
+            account_id=account_id,
+            phone_number=payload.phone_number,
+            amount=payload.amount,
+            idempotency_key=payload.idempotency_key,
+        )
+    except InvalidPhoneNumber as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except AirtelRequestFailed as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+    await db.commit()
+    return AirtelDepositResponse(deposit_id=deposit_id)
 
 
 @router.get("", response_model=DepositListResponse)

@@ -17,3 +17,11 @@ class DarajaAckResponse(BaseModel):
 
     ResultCode: int = 0
     ResultDesc: str = "Accepted"
+
+
+class AirtelAckResponse(BaseModel):
+    """Airtel's callback ack — a simple success/message pair, distinct
+    from Daraja's ResultCode/ResultDesc shape."""
+
+    status: str = "success"
+    message: str = "Callback received"

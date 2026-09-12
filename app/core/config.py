@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     MPESA_B2C_CERT_PATH: str = ""  # Path to Safaricom's public cert (.cer) for encrypting the above
     MPESA_CALLBACK_BASE_URL: str = ""  # this app's own public URL, e.g. https://bridgepay-backend.onrender.com
 
+    # --- Airtel Money Open API (Collections deposits, Disbursement payouts) ---
+    # Get these from https://developers.airtel.africa — create an
+    # application, add the Collections and Disbursements APIs, sandbox
+    # credentials are available immediately from Key Management.
+    AIRTEL_ENV: str = "sandbox"  # "sandbox" or "production"
+    AIRTEL_CLIENT_ID: str = ""
+    AIRTEL_CLIENT_SECRET: str = ""
+    # Shared secret configured in the developer portal for verifying
+    # callback signatures — see airtel_client.py's module docstring.
+    AIRTEL_CALLBACK_SECRET: str = ""
+    AIRTEL_DISBURSEMENT_PIN: str = ""  # Disburser account PIN, RSA-encrypted at use time — never stored raw
+    AIRTEL_ENCRYPTION_PUBLIC_KEY_PATH: str = ""  # Airtel's public key (PEM) for encrypting the PIN above
+    AIRTEL_CALLBACK_BASE_URL: str = ""  # this app's own public URL, same as MPESA_CALLBACK_BASE_URL usually
+
     # --- Google OAuth (Sign in with Google) ---
     # Get these from https://console.cloud.google.com/apis/credentials —
     # register GOOGLE_REDIRECT_URI there EXACTLY (Google rejects any

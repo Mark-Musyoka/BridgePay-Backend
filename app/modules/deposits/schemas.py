@@ -29,6 +29,17 @@ class MpesaDepositResponse(BaseModel):
     message: str = "STK push sent — check your phone to enter your M-Pesa PIN"
 
 
+class AirtelDepositCreate(BaseModel):
+    phone_number: str = Field(description="Kenyan mobile number, any common format")
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class AirtelDepositResponse(BaseModel):
+    deposit_id: uuid.UUID
+    message: str = "Payment request sent — check your phone to approve via Airtel Money"
+
+
 class DepositResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

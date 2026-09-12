@@ -1,11 +1,11 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-14 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-15 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
 fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
-conversion, module layer consistency) — see README.md for verified
-detail.** This file is the original design plus a running contract
-reference; README.md tracks what's actually running and tested.
+conversion, module layer consistency, Airtel Money) — see README.md for
+verified detail.** This file is the original design plus a running
+contract reference; README.md tracks what's actually running and tested.
 
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego, Mark
@@ -37,7 +37,7 @@ history*, not a stored number you update in place.
 This is the single most important lesson of the project — it's how every real
 payment system (and accounting system) avoids "money disappearing" bugs.
 
-## 4. Data models (v1, now well beyond v1 — see README Phases 7-14)
+## 4. Data models (v1, now well beyond v1 — see README Phases 7-15)
 | Model | Key fields |
 |---|---|
 | `User` | id, email, hashed_password (nullable — null for Google-only accounts), full_name, country (ISO alpha-2, nullable), is_active, is_admin, is_verified, google_id (nullable), stripe_customer_id (nullable), created_at |
@@ -47,8 +47,8 @@ payment system (and accounting system) avoids "money disappearing" bugs.
 | `RefreshToken` / `EmailVerificationToken` / `PasswordResetToken` / `OAuthHandoffCode` | All hashed, single-use tokens, same pattern |
 | `Notification` | id, user_id, type, title, body, is_read, created_at |
 | `PaymentMethod` | id, user_id, provider (stripe/mpesa), type (card/mobile_wallet), external_reference, masked_details, is_default |
-| `Deposit` | id, user_id, account_id, provider, status, amount, currency, exchange_rate (nullable), converted_amount (nullable), external_reference, idempotency_key, failure_reason |
-| `Payout` | id, user_id, account_id, provider, destination_reference, recipient_email, amount, currency, exchange_rate (nullable), converted_amount (nullable), status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason |
+| `Deposit` | id, user_id, account_id, provider (stripe/mpesa/airtel), status, amount, currency, exchange_rate (nullable), converted_amount (nullable), external_reference, idempotency_key, failure_reason |
+| `Payout` | id, user_id, account_id, provider (mpesa/stripe/airtel), destination_reference, recipient_email, amount, currency, exchange_rate (nullable), converted_amount (nullable), status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason |
 
 Built: **PaymentMethod** — real Stripe card linking + real M-Pesa phone
 linking. See README Phase 11 for full detail; no longer out of scope.
@@ -78,10 +78,11 @@ linking. See README Phase 11 for full detail; no longer out of scope.
 | Money | `POST /payment-methods/stripe/setup-intent`, `POST /payment-methods/stripe/confirm` | |
 | Money | `POST /payment-methods/mpesa` | |
 | Money | `DELETE /payment-methods/{id}` | |
-| Money | `POST /deposits/stripe`, `POST /deposits/mpesa`, `GET /deposits` | |
-| Money | `POST /payouts/mpesa`, `POST /payouts/stripe-card`, `GET /payouts` | Real external payouts — money leaves the platform |
+| Money | `POST /deposits/stripe`, `POST /deposits/mpesa`, `POST /deposits/airtel`, `GET /deposits` | |
+| Money | `POST /payouts/mpesa`, `POST /payouts/stripe-card`, `POST /payouts/airtel`, `GET /payouts` | Real external payouts — money leaves the platform |
 | Money | `POST /webhooks/stripe` | |
 | Money | `POST /webhooks/mpesa/stk-callback`, `POST /webhooks/mpesa/b2c-result`, `POST /webhooks/mpesa/b2c-timeout` | |
+| Money | `POST /webhooks/airtel/collection-callback`, `POST /webhooks/airtel/disbursement-callback` | Signature-verified, unlike M-Pesa's callbacks |
 | Other | `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all` | |
 | Other | `GET /admin/transactions` | Optional `?user_email=` filter |
 | Other | `GET /admin/audit-logs` | Optional `?action=` filter |
@@ -125,20 +126,20 @@ the complete, dated history of each:
 | 11-12 | Country/notifications/settings/payments (Stripe+M-Pesa), Google OAuth |
 | 13 | Multi-currency deposit/payout conversion |
 | 14 | Module layer consistency (router/schema/service/repository) |
+| 15 | Airtel Money integration (Collections deposits, Disbursement payouts) |
 
 
 ## 8. Way forward (next up, in priority order)
 The three items originally deferred out of Phase 11 were Airtel Money,
 bank-account payouts, and multi-currency conversion — see that phase's
-README writeup. Multi-currency conversion (Phase 13) is now done; these
-two remain:
+README writeup. Multi-currency conversion (Phase 13) and Airtel Money
+(Phase 15) are now both done; one remains:
 
 | # | Item | Notes |
 |---|---|---|
-| 1 | Airtel Money integration | STK-style push deposit/payout, same shape as the existing M-Pesa module (`airtel_client.py`, deposit/payout endpoints, webhooks) |
-| 2 | Bank-account payouts | Kenyan account number + bank code, and international IBAN/SWIFT — likely via Stripe bank-account tokens; required fields vary by country so this needs its own schema per region rather than reusing the card-token flow |
+| 1 | Bank-account payouts | Kenyan account number + bank code, and international IBAN/SWIFT — likely via Stripe bank-account tokens; required fields vary by country so this needs its own schema per region rather than reusing the card-token flow |
 
-After those: production deployment (backend is deploy-ready — see
+After that: production deployment (backend is deploy-ready — see
 `Dockerfile`/`render.yaml` — the actual deployment hasn't happened yet)
 and the frontend rebuild to match everything the backend now supports.
 See README's Timeline for the current target date.

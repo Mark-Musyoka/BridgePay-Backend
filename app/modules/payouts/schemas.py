@@ -14,6 +14,13 @@ class MpesaPayoutCreate(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=255)
 
 
+class AirtelPayoutCreate(BaseModel):
+    phone_number: str = Field(description="Recipient's Kenyan mobile number, any common format")
+    recipient_email: EmailStr = Field(description="Required for confirmation, regardless of destination type")
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
 class StripeCardPayoutCreate(BaseModel):
     card_token: str = Field(
         description=(

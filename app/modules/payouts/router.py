@@ -8,16 +8,19 @@ from app.db.session import get_db
 from app.modules.accounts.repository import AccountRepository
 from app.modules.payouts.repository import PayoutRepository
 from app.modules.payouts.schemas import (
+    AirtelPayoutCreate,
     MpesaPayoutCreate,
     PayoutListResponse,
     PayoutResponse,
     StripeCardPayoutCreate,
 )
 from app.modules.payouts.service import (
+    AirtelRequestFailed,
     InsufficientFundsError,
     InvalidPhoneNumber,
     MpesaRequestFailed,
     StripePayoutFailed,
+    create_airtel_payout,
     create_mpesa_payout,
     create_stripe_card_payout,
 )
@@ -103,6 +106,43 @@ async def payout_via_stripe_card(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except StripePayoutFailed as e:
         await db.commit()  # reversal already happened, commit it
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+    await db.commit()
+    return payout
+
+
+@router.post("/airtel", response_model=PayoutResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def payout_via_airtel(
+    request: Request,
+    payload: AirtelPayoutCreate,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_id = await _get_own_account_id(db, current_user)
+
+    try:
+        payout = await create_airtel_payout(
+            db,
+            user=current_user,
+            account_id=account_id,
+            phone_number=payload.phone_number,
+            recipient_email=payload.recipient_email,
+            amount=payload.amount,
+            idempotency_key=payload.idempotency_key,
+        )
+    except InsufficientFundsError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
+    except ExchangeRateUnavailable as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except InvalidPhoneNumber as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except AirtelRequestFailed as e:
+        await db.commit()  # balance was already reversed inside create_airtel_payout
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
     await db.commit()
