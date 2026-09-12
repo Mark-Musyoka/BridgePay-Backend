@@ -352,11 +352,31 @@ logic (locking order, balance re-check after lock, signature check
 before dispatch, empty-result-on-no-match). Full suite: 81/81 passing,
 same 43 routes registered before and after.
 
+### Phase 15 — Airtel Money integration
+The last of the three items deferred out of Phase 11 (Airtel Money,
+bank-account payouts, multi-currency conversion — see that phase's
+"Deliberately scoped out" note; multi-currency shipped in Phase 13).
+Same shape as the M-Pesa module — Collections for deposits (USSD push),
+Disbursement for payouts — against Airtel's real Open API
+(`developers.airtel.africa`), scoped to Kenya only, matching M-Pesa and
+the account currency default.
+
+| Component | Detail |
+|---|---|
+| `app/core/airtel_client.py` | OAuth2 client-credentials token fetch/cache (same pattern as M-Pesa's), Kenyan phone normalization (Airtel's format has no country code, unlike Daraja's), disbursement PIN encryption (RSA against Airtel's public key — same shape as M-Pesa B2C's certificate-based `generate_security_credential`), and callback signature verification |
+| Deposits (Collections) | `POST /deposits/airtel` — USSD push to the subscriber's phone, same async-then-webhook-confirms pattern as M-Pesa STK Push. Only credits the account once `POST /webhooks/airtel/collection-callback` reports `status_code: "TS"` |
+| Payouts (Disbursement) | `POST /payouts/airtel` — same deduct-first-then-reverse-on-failure discipline as every other payout provider. `POST /webhooks/airtel/disbursement-callback` confirms or triggers a reversal |
+| Callback signing | Unlike M-Pesa's Daraja (which signs nothing at all), Airtel callbacks are signature-verified via `X-Signature` (HMAC-SHA256, shared secret) — a bad or missing signature is rejected with `400` before the payload is even parsed |
+
+| Note | Detail |
+|---|---|
+| Untested against live endpoints | Same caveat as Phase 11's Stripe/M-Pesa integration — no real Airtel developer-portal credentials available. External HTTP calls are mocked via monkeypatch in tests |
+| Signing scheme confidence | Airtel doesn't publish one single, universally-documented callback-signing spec the way Stripe does. The `X-Signature`/HMAC-SHA256 scheme implemented here matches common integration patterns seen in the wild, but should be re-confirmed against the developer portal's callback-signing docs once real credentials are available — flagged the same way, not assumed correct |
+
 ## Explicitly not built
 | Item | Why |
 |---|---|
 | Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank account/routing number flow isn't — the required fields vary by country and weren't specified (see Phase 11) |
-| Airtel Money integration | Now approved and planned — see PLAN.md's Way forward section — just not built yet |
 | Production deployment | Backend is deploy-ready; the actual deployment hasn't happened yet |
 
 See PLAN.md § 8 (Way forward) for what's next, in priority order.

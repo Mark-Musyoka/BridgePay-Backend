@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.modules.webhooks.schemas import DarajaAckResponse, WebhookAckResponse
+from app.modules.webhooks.schemas import AirtelAckResponse, DarajaAckResponse, WebhookAckResponse
 from app.modules.webhooks.service import (
     InvalidWebhookSignature,
+    dispatch_airtel_collection_callback,
+    dispatch_airtel_disbursement_callback,
     dispatch_mpesa_b2c_result,
     dispatch_mpesa_stk_callback,
     verify_and_dispatch_stripe_event,
@@ -65,3 +67,31 @@ async def mpesa_b2c_timeout(request: Request):
     payload = await request.json()
     logger.warning("M-Pesa B2C queue timeout: %s", payload)
     return DarajaAckResponse()
+
+
+@router.post("/airtel/collection-callback", status_code=status.HTTP_200_OK, response_model=AirtelAckResponse)
+async def airtel_collection_callback(request: Request, db: AsyncSession = Depends(get_db)):
+    raw_body = await request.body()
+    signature = request.headers.get("x-signature")
+
+    try:
+        await dispatch_airtel_collection_callback(db, raw_body=raw_body, signature=signature)
+    except InvalidWebhookSignature:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature")
+
+    await db.commit()
+    return AirtelAckResponse()
+
+
+@router.post("/airtel/disbursement-callback", status_code=status.HTTP_200_OK, response_model=AirtelAckResponse)
+async def airtel_disbursement_callback(request: Request, db: AsyncSession = Depends(get_db)):
+    raw_body = await request.body()
+    signature = request.headers.get("x-signature")
+
+    try:
+        await dispatch_airtel_disbursement_callback(db, raw_body=raw_body, signature=signature)
+    except InvalidWebhookSignature:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature")
+
+    await db.commit()
+    return AirtelAckResponse()

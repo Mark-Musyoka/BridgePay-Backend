@@ -13,6 +13,7 @@ from app.db.base import Base
 class PayoutProvider(str, enum.Enum):
     mpesa = "mpesa"
     stripe = "stripe"
+    airtel = "airtel"
 
 
 class PayoutStatus(str, enum.Enum):

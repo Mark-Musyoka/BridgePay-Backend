@@ -303,6 +303,114 @@ async def test_mpesa_callback_marks_failed_on_cancellation(client, monkeypatch):
     assert balance == Decimal("0.00")  # not credited
 
 
+async def test_create_airtel_deposit_returns_deposit_id(client, monkeypatch):
+    monkeypatch.setattr("app.modules.deposits.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr(
+        "app.modules.deposits.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeMpesaResponse(200, {"status": {"success": True}})),
+    )
+
+    token = await _auth(client, email="airtel-dep@test.dev")
+    response = await client.post(
+        "/api/v1/deposits/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "amount": "100"},
+    )
+    assert response.status_code == 200
+    assert "deposit_id" in response.json()
+
+
+async def test_airtel_deposit_invalid_phone_rejected(client, monkeypatch):
+    monkeypatch.setattr("app.modules.deposits.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+
+    token = await _auth(client, email="airtel-bad-phone@test.dev")
+    response = await client.post(
+        "/api/v1/deposits/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "123", "amount": "100"},
+    )
+    assert response.status_code == 422
+
+
+async def test_airtel_callback_credits_account_on_success(client, monkeypatch):
+    monkeypatch.setattr("app.modules.deposits.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr(
+        "app.modules.deposits.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeMpesaResponse(200, {"status": {"success": True}})),
+    )
+    monkeypatch.setattr("app.modules.webhooks.service.verify_airtel_signature", lambda raw_body, signature: True)
+
+    token = await _auth(client, email="airtel-callback@test.dev")
+    create_response = await client.post(
+        "/api/v1/deposits/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "amount": "300"},
+    )
+    deposit_id = create_response.json()["deposit_id"]
+
+    from app.modules.deposits.models import Deposit
+
+    async with TestSessionLocal() as session:
+        deposit = (await session.execute(select(Deposit).where(Deposit.id == deposit_id))).scalar_one()
+        transaction_id = deposit.external_reference  # generated internally, not returned by the mocked API
+
+    callback_payload = {"transaction": {"id": transaction_id, "airtel_money_id": "MP123456", "status_code": "TS"}}
+    callback_response = await client.post(
+        "/api/v1/webhooks/airtel/collection-callback",
+        headers={"x-signature": "fake-sig"},
+        json=callback_payload,
+    )
+    assert callback_response.status_code == 200
+
+    balance = await _get_balance("airtel-callback@test.dev")
+    assert balance == Decimal("300.00")
+
+
+async def test_airtel_callback_marks_failed_on_failure_status(client, monkeypatch):
+    monkeypatch.setattr("app.modules.deposits.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr(
+        "app.modules.deposits.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeMpesaResponse(200, {"status": {"success": True}})),
+    )
+    monkeypatch.setattr("app.modules.webhooks.service.verify_airtel_signature", lambda raw_body, signature: True)
+
+    token = await _auth(client, email="airtel-callback-fail@test.dev")
+    create_response = await client.post(
+        "/api/v1/deposits/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "amount": "100"},
+    )
+    deposit_id = create_response.json()["deposit_id"]
+
+    from app.modules.deposits.models import Deposit
+
+    async with TestSessionLocal() as session:
+        deposit = (await session.execute(select(Deposit).where(Deposit.id == deposit_id))).scalar_one()
+        transaction_id = deposit.external_reference
+
+    callback_payload = {"transaction": {"id": transaction_id, "status_code": "TF"}}
+    response = await client.post(
+        "/api/v1/webhooks/airtel/collection-callback",
+        headers={"x-signature": "fake-sig"},
+        json=callback_payload,
+    )
+    assert response.status_code == 200
+
+    balance = await _get_balance("airtel-callback-fail@test.dev")
+    assert balance == Decimal("0.00")  # not credited
+
+
+async def test_airtel_callback_rejects_invalid_signature(client, monkeypatch):
+    monkeypatch.setattr("app.modules.webhooks.service.verify_airtel_signature", lambda raw_body, signature: False)
+
+    response = await client.post(
+        "/api/v1/webhooks/airtel/collection-callback",
+        headers={"x-signature": "bad-sig"},
+        json={"transaction": {"id": "whatever", "status_code": "TS"}},
+    )
+    assert response.status_code == 400
+
+
 async def _async_return(value):
     return value
 

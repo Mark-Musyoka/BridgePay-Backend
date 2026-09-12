@@ -1,7 +1,18 @@
+import json
+
+from app.core.airtel_client import verify_callback_signature as verify_airtel_signature
 from app.core.config import settings
 from app.core.stripe_client import stripe
-from app.modules.deposits.service import handle_mpesa_stk_callback, handle_stripe_webhook_event
-from app.modules.payouts.service import handle_mpesa_b2c_result, handle_stripe_payout_failed_event
+from app.modules.deposits.service import (
+    handle_airtel_collection_callback,
+    handle_mpesa_stk_callback,
+    handle_stripe_webhook_event,
+)
+from app.modules.payouts.service import (
+    handle_airtel_disbursement_callback,
+    handle_mpesa_b2c_result,
+    handle_stripe_payout_failed_event,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -36,3 +47,25 @@ async def dispatch_mpesa_stk_callback(db: AsyncSession, payload: dict) -> None:
 
 async def dispatch_mpesa_b2c_result(db: AsyncSession, payload: dict) -> None:
     await handle_mpesa_b2c_result(db, payload)
+
+
+async def _verify_airtel_or_raise(raw_body: bytes, signature: str | None) -> None:
+    """Shared by both Airtel callback endpoints — unlike M-Pesa's Daraja
+    (which signs nothing at all), Airtel callbacks ARE expected to carry
+    a signature, so an invalid/missing one is rejected outright rather
+    than merely noted as a caveat. See airtel_client.py's module
+    docstring for what this actually checks and its confidence level."""
+    if not verify_airtel_signature(raw_body, signature):
+        raise InvalidWebhookSignature("Invalid or missing Airtel callback signature")
+
+
+async def dispatch_airtel_collection_callback(db: AsyncSession, *, raw_body: bytes, signature: str | None) -> None:
+    await _verify_airtel_or_raise(raw_body, signature)
+    payload = json.loads(raw_body)
+    await handle_airtel_collection_callback(db, payload)
+
+
+async def dispatch_airtel_disbursement_callback(db: AsyncSession, *, raw_body: bytes, signature: str | None) -> None:
+    await _verify_airtel_or_raise(raw_body, signature)
+    payload = json.loads(raw_body)
+    await handle_airtel_disbursement_callback(db, payload)

@@ -13,6 +13,7 @@ from app.db.base import Base
 class DepositProvider(str, enum.Enum):
     stripe = "stripe"
     mpesa = "mpesa"
+    airtel = "airtel"
 
 
 class DepositStatus(str, enum.Enum):

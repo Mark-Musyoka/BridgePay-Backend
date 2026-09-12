@@ -403,6 +403,160 @@ async def test_payout_rejected_when_exchange_rate_unavailable(client, monkeypatc
     assert balance == Decimal("500.00")  # untouched
 
 
+
+# --- Airtel Money Disbursement ---------------------------------------------
+
+async def test_airtel_payout_rejects_insufficient_funds_before_calling_gateway(client, monkeypatch):
+    gateway_called = []
+    monkeypatch.setattr("app.modules.payouts.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr(
+        "app.modules.payouts.service.encrypt_disbursement_pin",
+        lambda: (gateway_called.append(1), "fake-encrypted-pin")[1],
+    )
+
+    token = await _verified_auth(client, email="airtel-poor-user@test.dev")
+    await _fund("airtel-poor-user@test.dev", "10.00")
+
+    response = await client.post(
+        "/api/v1/payouts/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "recipient_email": "someone@test.dev", "amount": "500.00"},
+    )
+    assert response.status_code == 400
+    assert len(gateway_called) == 0  # never even reached the gateway call
+
+    balance = await _get_balance("airtel-poor-user@test.dev")
+    assert balance == Decimal("10.00")  # untouched
+
+
+async def test_airtel_payout_deducts_immediately_then_reverses_on_sync_gateway_failure(client, monkeypatch):
+    monkeypatch.setattr("app.modules.payouts.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr("app.modules.payouts.service.encrypt_disbursement_pin", lambda: "fake-encrypted-pin")
+    monkeypatch.setattr(
+        "app.modules.payouts.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeResponse(500, {"error": "gateway down"})),
+    )
+
+    token = await _verified_auth(client, email="airtel-gw-fail@test.dev")
+    await _fund("airtel-gw-fail@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "recipient_email": "someone@test.dev", "amount": "200.00"},
+    )
+    assert response.status_code == 502
+
+    # Balance was deducted THEN reversed — should be back to the original.
+    balance = await _get_balance("airtel-gw-fail@test.dev")
+    assert balance == Decimal("500.00")
+
+
+async def test_airtel_payout_succeeds_and_stays_deducted_until_callback(client, monkeypatch):
+    monkeypatch.setattr("app.modules.payouts.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr("app.modules.payouts.service.encrypt_disbursement_pin", lambda: "fake-encrypted-pin")
+    monkeypatch.setattr(
+        "app.modules.payouts.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeResponse(200, {"status": {"success": True}})),
+    )
+    monkeypatch.setattr("app.modules.webhooks.service.verify_airtel_signature", lambda raw_body, signature: True)
+
+    token = await _verified_auth(client, email="airtel-success@test.dev")
+    await _fund("airtel-success@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "recipient_email": "someone@test.dev", "amount": "150.00"},
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    payout_id = response.json()["id"]
+
+    balance = await _get_balance("airtel-success@test.dev")
+    assert balance == Decimal("350.00")  # deducted immediately, awaiting callback
+
+    from app.modules.payouts.models import Payout
+
+    async with TestSessionLocal() as session:
+        payout = (await session.execute(select(Payout).where(Payout.id == payout_id))).scalar_one()
+        transaction_id = payout.external_reference
+
+    callback_payload = {"transaction": {"id": transaction_id, "airtel_money_id": "MP987654", "status_code": "TS"}}
+    callback_response = await client.post(
+        "/api/v1/webhooks/airtel/disbursement-callback",
+        headers={"x-signature": "fake-sig"},
+        json=callback_payload,
+    )
+    assert callback_response.status_code == 200
+
+    final_balance = await _get_balance("airtel-success@test.dev")
+    assert final_balance == Decimal("350.00")  # still deducted — payout succeeded for real
+
+
+async def test_airtel_payout_callback_failure_reverses_deduction(client, monkeypatch):
+    monkeypatch.setattr("app.modules.payouts.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr("app.modules.payouts.service.encrypt_disbursement_pin", lambda: "fake-encrypted-pin")
+    monkeypatch.setattr(
+        "app.modules.payouts.service.httpx.AsyncClient",
+        lambda: _FakeAsyncClient(_FakeResponse(200, {"status": {"success": True}})),
+    )
+    monkeypatch.setattr("app.modules.webhooks.service.verify_airtel_signature", lambda raw_body, signature: True)
+
+    token = await _verified_auth(client, email="airtel-async-fail@test.dev")
+    await _fund("airtel-async-fail@test.dev", "500.00")
+
+    create_response = await client.post(
+        "/api/v1/payouts/airtel",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"phone_number": "0733123456", "recipient_email": "someone@test.dev", "amount": "150.00"},
+    )
+    payout_id = create_response.json()["id"]
+    assert await _get_balance("airtel-async-fail@test.dev") == Decimal("350.00")
+
+    from app.modules.payouts.models import Payout
+
+    async with TestSessionLocal() as session:
+        payout = (await session.execute(select(Payout).where(Payout.id == payout_id))).scalar_one()
+        transaction_id = payout.external_reference
+
+    callback_payload = {"transaction": {"id": transaction_id, "status_code": "TF"}}
+    await client.post(
+        "/api/v1/webhooks/airtel/disbursement-callback",
+        headers={"x-signature": "fake-sig"},
+        json=callback_payload,
+    )
+
+    final_balance = await _get_balance("airtel-async-fail@test.dev")
+    assert final_balance == Decimal("500.00")  # reversed back to original
+
+
+async def test_airtel_payout_idempotency_key_prevents_double_deduction(client, monkeypatch):
+    call_count = []
+    monkeypatch.setattr("app.modules.payouts.service.get_airtel_access_token", lambda: _async_return("fake-token"))
+    monkeypatch.setattr("app.modules.payouts.service.encrypt_disbursement_pin", lambda: "fake-encrypted-pin")
+
+    def fake_client_factory():
+        call_count.append(1)
+        return _FakeAsyncClient(_FakeResponse(200, {"status": {"success": True}}))
+
+    monkeypatch.setattr("app.modules.payouts.service.httpx.AsyncClient", fake_client_factory)
+
+    token = await _verified_auth(client, email="airtel-idem-payout@test.dev")
+    await _fund("airtel-idem-payout@test.dev", "500.00")
+
+    body = {
+        "phone_number": "0733123456",
+        "recipient_email": "someone@test.dev",
+        "amount": "100.00",
+        "idempotency_key": "airtel-payout-key-1",
+    }
+    first = await client.post("/api/v1/payouts/airtel", headers={"Authorization": f"Bearer {token}"}, json=body)
+    second = await client.post("/api/v1/payouts/airtel", headers={"Authorization": f"Bearer {token}"}, json=body)
+    assert first.json()["id"] == second.json()["id"]
+    assert len(call_count) == 1  # gateway only ever called once
+
+
 class _FakeResponse:
     def __init__(self, status_code, data):
         self.status_code = status_code

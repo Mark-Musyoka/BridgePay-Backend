@@ -4,6 +4,11 @@ from decimal import ROUND_HALF_UP, Decimal
 import httpx
 from sqlalchemy import select
 
+from app.core.airtel_client import encrypt_disbursement_pin
+from app.core.airtel_client import normalize_kenyan_phone as normalize_airtel_phone
+from app.core.airtel_client import get_access_token as get_airtel_access_token
+from app.core.airtel_client import get_base_url as get_airtel_base_url
+from app.core.airtel_client import standard_headers as airtel_standard_headers
 from app.core.config import settings
 from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.mpesa_client import (
@@ -32,6 +37,10 @@ class InvalidPhoneNumber(Exception):
 
 
 class MpesaRequestFailed(Exception):
+    pass
+
+
+class AirtelRequestFailed(Exception):
     pass
 
 
@@ -363,3 +372,116 @@ async def handle_stripe_payout_failed_event(db, event: dict) -> None:
 
     reason = payout_data.get("failure_message", "Payout failed after being sent")
     await _reverse_deduction(db, payout=payout, reason=reason)
+
+
+# --- Airtel Money Disbursement ---------------------------------------------
+
+async def create_airtel_payout(
+    db,
+    *,
+    user: User,
+    account_id: uuid.UUID,
+    phone_number: str,
+    recipient_email: str,
+    amount: Decimal,
+    idempotency_key: str | None,
+) -> Payout:
+    payout_repo = PayoutRepository(db)
+
+    if idempotency_key:
+        existing = await payout_repo.get_by_idempotency_key_for_user(user.id, idempotency_key)
+        if existing is not None:
+            return existing
+
+    try:
+        normalized_phone = normalize_airtel_phone(phone_number)
+    except ValueError as e:
+        raise InvalidPhoneNumber(str(e))
+
+    # Deduct FIRST — see _deduct_balance_and_record's docstring for why.
+    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+        db, account_id=account_id, amount=amount, currency="KES"
+    )
+    conversion_happened = "KES" != account_currency.upper()
+
+    payout = await payout_repo.create(
+        user_id=user.id,
+        account_id=account_id,
+        provider=PayoutProvider.airtel,
+        destination_reference=normalized_phone,
+        recipient_email=recipient_email,
+        amount=amount,
+        currency="KES",
+        idempotency_key=idempotency_key,
+        exchange_rate=exchange_rate if conversion_happened else None,
+        converted_amount=converted_amount if conversion_happened else None,
+    )
+
+    try:
+        access_token = await get_airtel_access_token()
+        encrypted_pin = encrypt_disbursement_pin()
+        transaction_id = str(uuid.uuid4())
+
+        payload = {
+            "payee": {"msisdn": normalized_phone},
+            "reference": "BridgePay payout",
+            "pin": encrypted_pin,
+            "transaction": {"amount": int(amount), "id": transaction_id},
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{get_airtel_base_url()}/standard/v1/disbursements/",
+                json=payload,
+                headers=airtel_standard_headers(access_token),
+                timeout=30.0,
+            )
+
+        if response.status_code not in (200, 201):
+            raise AirtelRequestFailed(f"Disbursement request failed: {response.text}")
+
+        data = response.json()
+        if not data.get("status", {}).get("success", False):
+            raise AirtelRequestFailed(f"Disbursement request was not accepted: {data}")
+
+        await payout_repo.set_external_reference(payout, transaction_id)
+
+    except (AirtelRequestFailed, RuntimeError, httpx.HTTPError) as e:
+        # The API call itself failed synchronously — never even got a
+        # confirmed transaction to wait on a result for. Reverse
+        # immediately rather than leaving the sender's money in limbo.
+        await _reverse_deduction(db, payout=payout, reason=str(e))
+        raise AirtelRequestFailed(str(e))
+
+    return payout
+
+
+async def handle_airtel_disbursement_callback(db, payload: dict) -> None:
+    """Same shape and idempotency handling as handle_airtel_collection_callback
+    in deposits/service.py. Signature verification happens in the router
+    before this is called — see webhooks/service.py."""
+    transaction = payload.get("transaction", {})
+    transaction_id = transaction.get("id")
+    status_code = transaction.get("status_code")
+
+    if not transaction_id:
+        return
+
+    payout = await PayoutRepository(db).get_by_external_reference(transaction_id)
+    if payout is None or payout.status != "pending":
+        return
+
+    if status_code == "TS":  # Transaction Successful
+        await PayoutRepository(db).mark_completed(payout)
+        user = await _get_user(db, payout.user_id)
+        await notify(
+            db,
+            user_id=payout.user_id,
+            user_email=user.email,
+            type=NotificationType.payout_sent,
+            title="Payout sent",
+            body=f"Your payout of {payout.amount} {payout.currency} to {payout.destination_reference} was sent.",
+        )
+    else:
+        reason = f"Airtel Money transaction status: {status_code or 'unknown'}"
+        await _reverse_deduction(db, payout=payout, reason=reason)
