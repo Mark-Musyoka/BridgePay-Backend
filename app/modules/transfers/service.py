@@ -2,8 +2,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounts.repository import AccountRepository
-from app.modules.transactions.models import Transaction, TransactionStatus, TransactionType
+from app.modules.transactions.models import Transaction
+from app.modules.transfers.repository import TransferRepository
 from app.modules.users.models import User
 from app.modules.users.repository import UserRepository
 
@@ -39,13 +39,11 @@ async def execute_transfer(
     Raises plain domain exceptions rather than HTTPException — this keeps
     the service layer free of transport-layer concerns, and lets the
     router (which does know about HTTP and about audit logging) decide
-    how to respond to and log each failure mode consistently. Previously
-    this function raised HTTPException directly for the self-transfer /
-    recipient-not-found / account-not-found cases, which meant the router's
-    audit logging (which only wrapped InsufficientFundsError) silently
-    never fired for those — a real gap, fixed by this change.
+    how to respond to and log each failure mode consistently.
 
-    Safety approach:
+    Safety approach (implemented in TransferRepository — this function
+    owns the business rules, the repository owns the row locking and
+    ledger write):
     - Both account rows are locked with SELECT ... FOR UPDATE, in a
       consistent order (lower account id first), so two simultaneous
       transfers between the same two accounts can never deadlock each
@@ -59,46 +57,22 @@ async def execute_transfer(
     if from_user.email == to_email:
         raise SelfTransferError("Cannot transfer to yourself")
 
-    account_repo = AccountRepository(db)
-
     to_user = await UserRepository(db).get_by_email(to_email)
     if to_user is None:
         raise RecipientNotFoundError("Recipient not found")
 
-    from_account = await account_repo.get_by_user_id(from_user.id)
-    to_account = await account_repo.get_by_user_id(to_user.id)
-
+    transfer_repo = TransferRepository(db)
+    from_account, to_account = await transfer_repo.get_accounts_for_users(from_user.id, to_user.id)
     if from_account is None or to_account is None:
         raise AccountNotFoundError("Account not found")
 
-    # Lock both rows in a fixed order (by id) to avoid deadlocks between
-    # two transfers going in opposite directions at the same time.
-    account_ids_in_order = sorted([from_account.id, to_account.id])
-    locked_accounts = {}
-    for acc_id in account_ids_in_order:
-        locked_accounts[acc_id] = await account_repo.get_by_id_locked(acc_id)
-
+    locked_accounts = await transfer_repo.lock_accounts_in_order([from_account.id, to_account.id])
     from_account = locked_accounts[from_account.id]
     to_account = locked_accounts[to_account.id]
 
     if from_account.balance < amount:
         raise InsufficientFundsError("Insufficient funds")
 
-    from_account.balance -= amount
-    to_account.balance += amount
-
-    transaction = Transaction(
-        from_account_id=from_account.id,
-        to_account_id=to_account.id,
-        amount=amount,
-        currency=from_account.currency,
-        status=TransactionStatus.completed,
-        type=TransactionType.transfer,
-        reference_note=reference_note,
+    return await transfer_repo.record_transfer(
+        from_account=from_account, to_account=to_account, amount=amount, reference_note=reference_note
     )
-    db.add(transaction)
-
-    # Flush (not commit) — the caller commits, so this transfer and any
-    # audit log entry it adds land in the same atomic DB transaction.
-    await db.flush()
-    return transaction
