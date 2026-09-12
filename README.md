@@ -460,34 +460,35 @@ phase's "Deliberately scoped out" note). A deposit or payout made in a
 currency other than the destination account's own currency (KES by
 default) is now converted before it touches the balance, instead of
 crediting or deducting the raw foreign-currency number as if it were
-already KES.
+already KES. Not suitable for anything requiring real-time FX
+precision — adequate for a wallet's conversion, not a trading system.
 
-- **`app/core/exchange_rate_client.py`** — a small client for the
-  [Frankfurter API](https://www.frankfurter.dev/) (free, no API key,
-  backed by ECB reference rates). Rates are cached in-process for an
-  hour per currency pair, same reasoning as the M-Pesa token cache.
-  Same-currency pairs short-circuit to a 1:1 rate with no network call
-  at all.
-- **Deposits** — `_credit_account_and_record` now converts
-  `deposit.amount` from `deposit.currency` into the account's currency
-  before crediting. The applied rate and the resulting converted amount
-  are persisted on the `Deposit` row (`exchange_rate`,
-  `converted_amount` — both stay `NULL` when no conversion was needed).
-  The `Transaction` row records the account-currency amount that
-  actually moved, not the depositor's original figure.
-- **Payouts** — `_deduct_balance_and_record` converts the same way
-  before deducting, and `_reverse_deduction` credits back the
-  **converted** amount on failure, not the original — crediting back
-  the raw original figure would have put the wrong amount back whenever
-  the payout's currency differed from the account's.
-- If the exchange rate is unavailable, nothing is guessed at: a deposit
-  is marked failed (no funds move) and the depositor is notified; a
-  payout is rejected with `503` before any external gateway call, since
-  the failure happens inside `_deduct_balance_and_record`, ahead of the
-  M-Pesa/Stripe request.
+| Component | What changed |
+|---|---|
+| `app/core/exchange_rate_client.py` | New client for the [Frankfurter API](https://www.frankfurter.dev/) (free, no key, ECB rates). Hourly per-pair cache; same-currency pairs short-circuit to 1:1, no network call |
+| Deposits | `_credit_account_and_record` converts into the account's currency before crediting; rate + converted amount persisted on `Deposit` (`NULL` when no conversion needed); `Transaction` records the account-currency amount that actually moved |
+| Payouts | `_deduct_balance_and_record` converts the same way before deducting; `_reverse_deduction` credits back the **converted** amount on failure, not the original |
+| Rate unavailable | Deposit marked failed (no funds move), depositor notified; payout rejected with `503` before any external gateway call |
 
-Not suitable for anything requiring real-time FX precision — adequate
-for a wallet's deposit/payout conversion, not a trading system.
+### Phase 14 — Consistent router/schema/service/repository layer
+Prompted by a mentor code review flagging module inconsistency. Full
+audit found no missing business logic or stub code anywhere — but
+several routers reached into another module's repository directly
+instead of going through their own service layer. See PLAN.md § 10 for
+the per-module file matrix and the reasoning behind what's deliberately
+still missing.
+
+| Module | Added | Why |
+|---|---|---|
+| `accounts`, `transactions` | `service.py` | Router no longer calls the repository directly |
+| `transfers` | `repository.py` | Extracted the account-locking + ledger-write logic out of `service.py`, which now owns just the business rules |
+| `admin` | `repository.py`, `service.py`, `schemas.py` | Composes accounts/users/transactions/audit repositories in one place instead of the router importing four other modules; schemas re-export the response shapes it reuses |
+| `webhooks` | `service.py`, `schemas.py` | Signature verification and event dispatch moved out of the router; typed ack responses (`WebhookAckResponse`, `DarajaAckResponse`) replace raw dicts |
+
+Pure structural refactor — reviewed diff-by-diff against the original
+logic (locking order, balance re-check after lock, signature check
+before dispatch, empty-result-on-no-match). Full suite: 81/81 passing,
+same 43 routes registered before and after.
 
 ## Explicitly not built
 | Item | Why |

@@ -1,11 +1,11 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-13 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-14 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
 fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
-conversion) — see README.md for verified detail.** This file is the
-original design plus a running contract reference; README.md tracks
-what's actually running and tested.
+conversion, module layer consistency) — see README.md for verified
+detail.** This file is the original design plus a running contract
+reference; README.md tracks what's actually running and tested.
 
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego, Mark
@@ -37,7 +37,7 @@ history*, not a stored number you update in place.
 This is the single most important lesson of the project — it's how every real
 payment system (and accounting system) avoids "money disappearing" bugs.
 
-## 4. Data models (v1, now well beyond v1 — see README Phases 7-13)
+## 4. Data models (v1, now well beyond v1 — see README Phases 7-14)
 | Model | Key fields |
 |---|---|
 | `User` | id, email, hashed_password (nullable — null for Google-only accounts), full_name, country (ISO alpha-2, nullable), is_active, is_admin, is_verified, google_id (nullable), stripe_customer_id (nullable), created_at |
@@ -115,12 +115,17 @@ linking. See README Phase 11 for full detail; no longer out of scope.
 | 7 | Celery integration — background task for "send transfer confirmation" (mocked) | [x] |
 | 8 | Admin view — see all transactions, flag suspicious ones | [x] |
 
-Phases 7-13 (refresh tokens, API versioning, email verification/password
-reset, the modular reorg, production-readiness fixes, the full
-country/notifications/settings/payments/Google-OAuth feature set, and
-multi-currency deposit/payout conversion) all happened after this
-original 8-item build order — see README.md for the complete, dated
-history of each.
+Everything after this original 8-item build order — see README.md for
+the complete, dated history of each:
+
+| Phases | Covers |
+|---|---|
+| 7-8 | Refresh tokens, API versioning |
+| 9-10 | Email verification/password reset, modular reorg, production-readiness fixes |
+| 11-12 | Country/notifications/settings/payments (Stripe+M-Pesa), Google OAuth |
+| 13 | Multi-currency deposit/payout conversion |
+| 14 | Module layer consistency (router/schema/service/repository) |
+
 
 ## 8. Way forward (next up, in priority order)
 The three items originally deferred out of Phase 11 were Airtel Money,
@@ -247,36 +252,29 @@ BridgePay-Backend/
   README.md
 ```
 
-## 10. Architecture notes: why some modules have fewer files
-Every module follows the same layering — `models.py` (table),
-`repository.py` (DB queries), `schemas.py` (request/response shapes),
-`service.py` (business logic), `router.py` (HTTP layer) — but not every
-module needs all five. A module skips a layer only when there's
-genuinely nothing to put in it, never as a shortcut:
+## 10. Architecture notes: module file matrix
+Standard layering: `models.py` (table), `repository.py` (DB queries),
+`schemas.py` (request/response shapes), `service.py` (business logic),
+`router.py` (HTTP layer). As of Phase 14, every module has all five
+except where a layer would genuinely have nothing in it:
 
-- **`accounts`, `transactions`** — no `service.py`. Each has exactly one
-  read-only endpoint (`GET /accounts/me`, `GET /transactions`) with no
-  business logic beyond "fetch and paginate" — the router calls the
-  repository directly. A service layer here would just be a pass-through
-  wrapper around the repository call.
-- **`transfers`** — no `models.py`/`repository.py`. It doesn't own a
-  table; it moves money between `Account` rows and writes `Transaction`
-  rows, both of which belong to their own modules. Introducing a
-  transfers-specific model or repo would mean duplicating the
-  accounts/transactions data access instead of reusing it.
-- **`admin`** — no `schemas.py`/`service.py`/`repository.py`. It's a
-  read-only reporting layer over other modules' data (transactions,
-  audit logs), reusing their repositories and response schemas directly.
-  No new data or business rule originates here.
-- **`webhooks`** — only `router.py`. It's a dispatcher: verify the
-  signature, then call into `deposits`/`payouts` services, which own the
-  actual state changes. It has no model or business logic of its own.
-- **`audit`** — no `router.py`. Audit log rows are written from inside
-  other modules' request flows (`log_action()`, called from `transfers`,
-  auth failures, etc.) and read back out through `admin`'s endpoints —
-  there's no reason for `audit` to expose its own HTTP surface too.
+| Module | models | repository | schemas | service | router | Missing layer, and why |
+|---|---|---|---|---|---|---|
+| `users` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `auth` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `accounts` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `transactions` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `transfers` | ❌ | ✅ | ✅ | ✅ | ✅ | No table of its own — moves `Account` balances and writes `Transaction` rows, both owned by their own modules |
+| `notifications` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `payment_methods` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `deposits` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `payouts` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `webhooks` | ❌ | ❌ | ✅ | ✅ | ✅ | No table, no state to query — verifies signatures and dispatches to `deposits`/`payouts`, which own the actual data |
+| `admin` | ❌ | ✅ | ✅ | ✅ | ✅ | No table — read-only reporting layer composing other modules' repositories |
+| `audit` | ✅ | ✅ | ✅ | ✅ | ❌ | No router — logs are written from other modules' request flows and already read back via `GET /admin/audit-logs`; a second endpoint would duplicate it |
 
-Verified as of Phase 13: every endpoint documented in § 5 (API surface)
-exists in code and is registered in `app/main.py`; no stub functions,
-`TODO`s, or `NotImplementedError`s anywhere in `app/modules/`.
+Verified as of Phase 14: every endpoint in § 5 (API surface) exists in
+code and is registered in `app/main.py`; no stub functions, `TODO`s, or
+`NotImplementedError`s anywhere in `app/modules/`; the reasoning for
+each ❌ above is also left as a comment in that module's `__init__.py`.
 
