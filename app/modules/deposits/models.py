@@ -47,6 +47,14 @@ class Deposit(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    # Populated only when currency differs from the destination account's
+    # currency (see _credit_account_and_record in service.py). exchange_rate
+    # is units of account currency per unit of `currency`; converted_amount
+    # is amount * exchange_rate, i.e. what actually gets credited to the
+    # account and recorded on the Transaction. Both stay NULL for a deposit
+    # made directly in the account's own currency — nothing was converted.
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    converted_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     # Stripe: PaymentIntent id (pi_...). M-Pesa: CheckoutRequestID. This is
     # how the webhook, arriving with no other context, finds its way back
     # to this row.
