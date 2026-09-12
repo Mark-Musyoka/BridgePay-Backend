@@ -454,10 +454,44 @@ a second exchange attempt correctly fails), and the specific crash this
 could have caused — password login against a Google-only account —
 correctly returning 401 instead of a 500.
 
+### Phase 13 — Multi-currency deposit/payout conversion
+One of the three items previously deferred out of Phase 11 (see that
+phase's "Deliberately scoped out" note). A deposit or payout made in a
+currency other than the destination account's own currency (KES by
+default) is now converted before it touches the balance, instead of
+crediting or deducting the raw foreign-currency number as if it were
+already KES.
+
+- **`app/core/exchange_rate_client.py`** — a small client for the
+  [Frankfurter API](https://www.frankfurter.dev/) (free, no API key,
+  backed by ECB reference rates). Rates are cached in-process for an
+  hour per currency pair, same reasoning as the M-Pesa token cache.
+  Same-currency pairs short-circuit to a 1:1 rate with no network call
+  at all.
+- **Deposits** — `_credit_account_and_record` now converts
+  `deposit.amount` from `deposit.currency` into the account's currency
+  before crediting. The applied rate and the resulting converted amount
+  are persisted on the `Deposit` row (`exchange_rate`,
+  `converted_amount` — both stay `NULL` when no conversion was needed).
+  The `Transaction` row records the account-currency amount that
+  actually moved, not the depositor's original figure.
+- **Payouts** — `_deduct_balance_and_record` converts the same way
+  before deducting, and `_reverse_deduction` credits back the
+  **converted** amount on failure, not the original — crediting back
+  the raw original figure would have put the wrong amount back whenever
+  the payout's currency differed from the account's.
+- If the exchange rate is unavailable, nothing is guessed at: a deposit
+  is marked failed (no funds move) and the depositor is notified; a
+  payout is rejected with `503` before any external gateway call, since
+  the failure happens inside `_deduct_balance_and_record`, ahead of the
+  M-Pesa/Stripe request.
+
+Not suitable for anything requiring real-time FX precision — adequate
+for a wallet's deposit/payout conversion, not a trading system.
+
 ## Explicitly not built
 | Item | Why |
 |---|---|
 | Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank account/routing number flow isn't — the required fields vary by country and weren't specified (see Phase 11) |
 | Airtel Money integration | Mentioned early on as a "nice to have" alongside M-Pesa, never chosen as a gateway to actually build |
-| Multi-currency conversion | Each payout method is scoped to its own native currency — no cross-currency conversion logic |
 | Production deployment | Backend is deploy-ready; the actual deployment hasn't happened yet |
