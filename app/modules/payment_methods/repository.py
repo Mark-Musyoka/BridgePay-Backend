@@ -25,7 +25,7 @@ class PaymentMethodRepository:
     async def get_default_for_user(
         self, user_id: uuid.UUID, provider: PaymentMethodProvider | None = None
     ) -> PaymentMethod | None:
-        query = select(PaymentMethod).where(PaymentMethod.user_id == user_id, PaymentMethod.is_default == True)  # noqa: E712
+        query = select(PaymentMethod).where(PaymentMethod.user_id == user_id, PaymentMethod.is_default == True)
         if provider is not None:
             query = query.where(PaymentMethod.provider == provider)
         result = await self.db.execute(query)

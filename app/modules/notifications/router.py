@@ -47,7 +47,6 @@ async def mark_notification_read(
 
     notification.is_read = True
     await db.commit()
-    return None
 
 
 @router.post("/read-all", status_code=status.HTTP_204_NO_CONTENT)
@@ -57,4 +56,3 @@ async def mark_all_notifications_read(
 ):
     await NotificationRepository(db).mark_all_read(current_user.id)
     await db.commit()
-    return None

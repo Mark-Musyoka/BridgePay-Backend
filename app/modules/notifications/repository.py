@@ -24,8 +24,8 @@ class NotificationRepository:
         count_query = select(func.count()).select_from(Notification).where(condition)
 
         if unread_only:
-            query = query.where(Notification.is_read == False)  # noqa: E712
-            count_query = count_query.where(Notification.is_read == False)  # noqa: E712
+            query = query.where(Notification.is_read == False)
+            count_query = count_query.where(Notification.is_read == False)
 
         total_result = await self.db.execute(count_query)
         total = total_result.scalar_one()

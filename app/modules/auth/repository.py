@@ -3,7 +3,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.auth.models import EmailVerificationToken, OAuthHandoffCode, PasswordResetToken, RefreshToken
+from app.modules.auth.models import (
+    EmailVerificationToken,
+    OAuthHandoffCode,
+    PasswordResetToken,
+    RefreshToken,
+)
 
 
 class RefreshTokenRepository:

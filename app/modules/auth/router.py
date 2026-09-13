@@ -99,7 +99,6 @@ async def verify_email(request: Request, payload: VerifyEmailRequest, db: AsyncS
 
     await log_action(db, request=request, action="email_verified")
     await db.commit()
-    return None
 
 
 @router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
@@ -129,7 +128,6 @@ async def resend_verification(
     except Exception:
         pass
 
-    return None
 
 
 @router.post("/login", response_model=Token)
@@ -200,7 +198,6 @@ async def logout(request: Request, payload: LogoutRequest, db: AsyncSession = De
     # thing an audit log should cover.
     await log_action(db, request=request, action="logout")
     await db.commit()
-    return None
 
 
 @router.post("/password-reset-request", status_code=status.HTTP_204_NO_CONTENT)
@@ -222,7 +219,6 @@ async def password_reset_request(
         except Exception:
             pass
 
-    return None
 
 
 @router.post("/password-reset-confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -239,7 +235,6 @@ async def password_reset_confirm(
 
     await log_action(db, request=request, action="password_reset_completed")
     await db.commit()
-    return None
 
 
 # --- Google OAuth (Sign in with Google) -------------------------------

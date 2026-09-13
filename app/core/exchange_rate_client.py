@@ -42,7 +42,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> Decimal:
     to_currency = to_currency.upper()
 
     if from_currency == to_currency:
-        return Decimal("1")
+        return Decimal(1)
 
     cache_key = (from_currency, to_currency)
     cached = _rate_cache.get(cache_key)

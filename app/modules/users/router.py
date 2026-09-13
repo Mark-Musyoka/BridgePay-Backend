@@ -79,7 +79,6 @@ async def change_current_user_password(
 
     await log_action(db, request=request, action="password_changed", user_id=current_user.id)
     await db.commit()
-    return None
 
 
 @public_router.get("/countries", response_model=list[CountryResponse])

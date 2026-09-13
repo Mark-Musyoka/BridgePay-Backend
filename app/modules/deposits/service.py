@@ -4,11 +4,12 @@ from decimal import ROUND_HALF_UP, Decimal
 import httpx
 from sqlalchemy import select
 
-from app.core.airtel_client import normalize_kenyan_phone as normalize_airtel_phone
 from app.core.airtel_client import get_access_token as get_airtel_access_token
 from app.core.airtel_client import get_base_url as get_airtel_base_url
+from app.core.airtel_client import normalize_kenyan_phone as normalize_airtel_phone
 from app.core.airtel_client import standard_headers as airtel_standard_headers
 from app.core.config import settings
+from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.mpesa_client import (
     current_timestamp,
     generate_stk_password,
@@ -16,14 +17,17 @@ from app.core.mpesa_client import (
     get_base_url,
     normalize_kenyan_phone,
 )
-from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.stripe_client import stripe
 from app.modules.accounts.repository import AccountRepository
 from app.modules.deposits.models import Deposit, DepositProvider
 from app.modules.deposits.repository import DepositRepository
 from app.modules.notifications.models import NotificationType
 from app.modules.notifications.service import notify
-from app.modules.transactions.models import Transaction, TransactionStatus, TransactionType
+from app.modules.transactions.models import (
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+)
 from app.modules.users.models import User
 
 

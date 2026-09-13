@@ -1,8 +1,8 @@
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.modules.users.models import User
 from tests.conftest import TestSessionLocal
-from tests.test_auth import login, register
+from tests.test_auth import register
 
 
 def _fake_google_user_info(email="googler@test.dev", name="Googler", sub="google-sub-123", verified=True):

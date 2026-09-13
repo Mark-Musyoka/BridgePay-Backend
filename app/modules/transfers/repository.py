@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounts.models import Account
 from app.modules.accounts.repository import AccountRepository
-from app.modules.transactions.models import Transaction, TransactionStatus, TransactionType
+from app.modules.transactions.models import (
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+)
 
 
 class TransferRepository:

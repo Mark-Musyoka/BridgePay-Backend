@@ -9,14 +9,14 @@ from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 
 
-def _fake_convert(rate=Decimal("2")):
+def _fake_convert(rate=Decimal(2)):
     """Deterministic stand-in for app.core.exchange_rate_client.convert —
     avoids a real network call to Frankfurter in tests, and makes the
     converted amount predictable to assert on. Same-currency pairs still
     short-circuit to a 1:1 rate, matching the real implementation."""
     async def _convert(amount, from_currency, to_currency):
         if from_currency.upper() == to_currency.upper():
-            return amount, Decimal("1")
+            return amount, Decimal(1)
         return amount * rate, rate
     return _convert
 
@@ -239,7 +239,7 @@ async def test_stripe_card_payout_success(client, monkeypatch):
     monkeypatch.setattr(
         "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="stripe-payout@test.dev")
     await _fund("stripe-payout@test.dev", "500.00")
@@ -263,7 +263,7 @@ async def test_stripe_card_payout_reverses_on_immediate_failure(client, monkeypa
         "app.modules.payouts.service.stripe.Payout.create",
         lambda **kw: _fake_stripe_payout(status="failed"),
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="stripe-payout-fail@test.dev")
     await _fund("stripe-payout-fail@test.dev", "500.00")
@@ -287,7 +287,7 @@ async def test_stripe_card_payout_reverses_on_stripe_exception(client, monkeypat
         raise stripe_sdk.error.CardError("Card declined", None, "card_declined")
 
     monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", raise_error)
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="stripe-payout-exc@test.dev")
     await _fund("stripe-payout-exc@test.dev", "500.00")
@@ -315,7 +315,7 @@ async def test_stripe_payout_failed_webhook_reverses_a_completed_payout(client, 
             "data": {"object": {"id": "po_later_fails", "failure_message": "Card closed"}},
         },
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="stripe-late-fail@test.dev")
     await _fund("stripe-late-fail@test.dev", "500.00")
@@ -347,7 +347,7 @@ async def test_stripe_payout_records_exchange_rate_and_converted_amount(client, 
     monkeypatch.setattr(
         "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("130")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(130)))
 
     token = await _verified_auth(client, email="payout-convert@test.dev")
     await _fund("payout-convert@test.dev", "5000.00")
@@ -367,7 +367,7 @@ async def test_stripe_payout_records_exchange_rate_and_converted_amount(client, 
 
     async with TestSessionLocal() as session:
         payout = (await session.execute(select(Payout).where(Payout.id == payout_id))).scalar_one()
-        assert payout.exchange_rate == Decimal("130")
+        assert payout.exchange_rate == Decimal(130)
         assert payout.converted_amount == Decimal("1300.00")
         assert payout.amount == Decimal("10.00")  # original figure preserved, untouched
 
@@ -410,7 +410,7 @@ async def test_bank_account_payout_success(client, monkeypatch):
     monkeypatch.setattr(
         "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="bank-payout@test.dev")
     await _fund("bank-payout@test.dev", "500.00")
@@ -463,7 +463,7 @@ async def test_bank_account_payout_reverses_on_immediate_failure(client, monkeyp
         "app.modules.payouts.service.stripe.Payout.create",
         lambda **kw: _fake_stripe_payout(status="failed"),
     )
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="bank-payout-fail@test.dev")
     await _fund("bank-payout-fail@test.dev", "500.00")
@@ -492,7 +492,7 @@ async def test_bank_account_payout_reverses_on_stripe_exception(client, monkeypa
         raise stripe_sdk.error.InvalidRequestError("Bank account verification failed", None)
 
     monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", raise_error)
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="bank-payout-exc@test.dev")
     await _fund("bank-payout-exc@test.dev", "500.00")
@@ -521,7 +521,7 @@ async def test_bank_account_payout_idempotency_key_prevents_double_deduction(cli
         return _fake_stripe_payout()
 
     monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", fake_payout_create)
-    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _verified_auth(client, email="bank-payout-idem@test.dev")
     await _fund("bank-payout-idem@test.dev", "500.00")

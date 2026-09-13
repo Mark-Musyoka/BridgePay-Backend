@@ -9,4 +9,4 @@ modules directly, without duplicating either schema.
 from app.modules.audit.schemas import AuditLogListResponse
 from app.modules.transactions.schemas import TransactionListResponse
 
-__all__ = ["TransactionListResponse", "AuditLogListResponse"]
+__all__ = ["AuditLogListResponse", "TransactionListResponse"]

@@ -1,7 +1,6 @@
-from decimal import Decimal
 
-from tests.test_transfers import _fund_account, _register_and_login
 from tests.test_auth import register
+from tests.test_transfers import _fund_account, _register_and_login
 
 
 async def test_transfer_notifies_both_sender_and_recipient(client, db_session):

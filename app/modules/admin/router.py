@@ -4,7 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_current_admin_user
 from app.db.session import get_db
 from app.modules.admin.schemas import AuditLogListResponse, TransactionListResponse
-from app.modules.admin.service import list_audit_logs_for_admin, list_transactions_for_admin
+from app.modules.admin.service import (
+    list_audit_logs_for_admin,
+    list_transactions_for_admin,
+)
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/admin", tags=["admin"])

@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.airtel_client import verify_callback_signature as verify_airtel_signature
 from app.core.config import settings
 from app.core.stripe_client import stripe
@@ -13,7 +15,6 @@ from app.modules.payouts.service import (
     handle_mpesa_b2c_result,
     handle_stripe_payout_failed_event,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class InvalidWebhookSignature(Exception):

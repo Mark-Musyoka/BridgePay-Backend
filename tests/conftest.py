@@ -2,8 +2,8 @@ import os
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.limiter import limiter
 from app.db.base import Base

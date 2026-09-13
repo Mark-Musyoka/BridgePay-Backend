@@ -8,14 +8,14 @@ from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 
 
-def _fake_convert(rate=Decimal("2")):
+def _fake_convert(rate=Decimal(2)):
     """Deterministic stand-in for app.core.exchange_rate_client.convert —
     avoids a real network call to Frankfurter in tests, and makes the
     converted amount predictable to assert on. Same-currency pairs still
     short-circuit to a 1:1 rate, matching the real implementation."""
     async def _convert(amount, from_currency, to_currency):
         if from_currency.upper() == to_currency.upper():
-            return amount, Decimal("1")
+            return amount, Decimal(1)
         return amount * rate, rate
     return _convert
 
@@ -108,7 +108,7 @@ async def test_stripe_webhook_credits_account_on_success(client, monkeypatch):
             "data": {"object": {"id": "pi_webhook_test"}},
         },
     )
-    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _auth(client, email="webhook-user@test.dev")
     await client.post(
@@ -146,7 +146,7 @@ async def test_stripe_webhook_is_idempotent_on_redelivery(client, monkeypatch):
             "data": {"object": {"id": "pi_redelivered"}},
         },
     )
-    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("2")))
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal(2)))
 
     token = await _auth(client, email="redelivery-user@test.dev")
     await client.post(
@@ -435,7 +435,7 @@ async def test_stripe_deposit_records_exchange_rate_and_converted_amount(client,
             "data": {"object": {"id": "pi_convert_test"}},
         },
     )
-    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal("130")))
+    monkeypatch.setattr("app.modules.deposits.service.convert", _fake_convert(rate=Decimal(130)))
 
     token = await _auth(client, email="convert-user@test.dev")
     create_response = await client.post(
@@ -454,7 +454,7 @@ async def test_stripe_deposit_records_exchange_rate_and_converted_amount(client,
 
     async with TestSessionLocal() as session:
         deposit = (await session.execute(select(Deposit).where(Deposit.id == deposit_id))).scalar_one()
-        assert deposit.exchange_rate == Decimal("130")
+        assert deposit.exchange_rate == Decimal(130)
         assert deposit.converted_amount == Decimal("1300.00")
         assert deposit.amount == Decimal("10.00")  # original figure preserved, untouched
 

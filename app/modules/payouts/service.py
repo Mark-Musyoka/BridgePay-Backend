@@ -5,15 +5,14 @@ import httpx
 from sqlalchemy import select
 
 from app.core.airtel_client import encrypt_disbursement_pin
-from app.core.airtel_client import normalize_kenyan_phone as normalize_airtel_phone
 from app.core.airtel_client import get_access_token as get_airtel_access_token
 from app.core.airtel_client import get_base_url as get_airtel_base_url
+from app.core.airtel_client import normalize_kenyan_phone as normalize_airtel_phone
 from app.core.airtel_client import standard_headers as airtel_standard_headers
 from app.core.config import settings
 from app.core.countries import COUNTRIES
-from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
+from app.core.exchange_rate_client import convert
 from app.core.mpesa_client import (
-    current_timestamp,
     generate_security_credential,
     get_access_token,
     get_base_url,
@@ -25,7 +24,11 @@ from app.modules.notifications.models import NotificationType
 from app.modules.notifications.service import notify
 from app.modules.payouts.models import Payout, PayoutProvider
 from app.modules.payouts.repository import PayoutRepository
-from app.modules.transactions.models import Transaction, TransactionStatus, TransactionType
+from app.modules.transactions.models import (
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+)
 from app.modules.users.models import User
 
 

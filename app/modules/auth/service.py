@@ -32,7 +32,6 @@ RESET_TOKEN_EXPIRE_MINUTES = 30
 class RefreshTokenReused(Exception):
     """Raised when an already-used (revoked) refresh token is presented
     again — a signal of possible theft."""
-    pass
 
 
 class RefreshTokenInvalid(Exception):

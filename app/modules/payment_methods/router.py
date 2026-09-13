@@ -101,4 +101,3 @@ async def unlink_payment_method(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment method not found")
 
     await db.commit()
-    return None

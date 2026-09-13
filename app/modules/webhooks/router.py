@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.modules.webhooks.schemas import AirtelAckResponse, DarajaAckResponse, WebhookAckResponse
+from app.modules.webhooks.schemas import (
+    AirtelAckResponse,
+    DarajaAckResponse,
+    WebhookAckResponse,
+)
 from app.modules.webhooks.service import (
     InvalidWebhookSignature,
     dispatch_airtel_collection_callback,

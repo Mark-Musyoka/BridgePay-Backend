@@ -4,7 +4,6 @@ from sqlalchemy import select, update
 
 from app.modules.accounts.models import Account
 from app.modules.users.models import User
-
 from tests.conftest import TestSessionLocal
 from tests.test_auth import login, register
 

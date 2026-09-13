@@ -2,14 +2,15 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounts.service import get_my_account
-from app.modules.transactions.models import Transaction
-from app.modules.transactions.repository import TransactionRepository
-
 # Re-exported so callers (the router) only need to import from this
 # module, not reach into accounts.service directly for an error that's
 # raised as a side effect of building someone's transaction history.
-from app.modules.accounts.service import AccountNotFound  # noqa: F401
+from app.modules.accounts.service import (
+    AccountNotFound,  # noqa: F401
+    get_my_account,
+)
+from app.modules.transactions.models import Transaction
+from app.modules.transactions.repository import TransactionRepository
 
 
 async def list_my_transactions(

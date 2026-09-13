@@ -2,7 +2,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.mpesa_client import normalize_kenyan_phone
 from app.core.stripe_client import stripe
-from app.modules.payment_methods.models import PaymentMethod, PaymentMethodProvider, PaymentMethodType
+from app.modules.payment_methods.models import (
+    PaymentMethod,
+    PaymentMethodProvider,
+    PaymentMethodType,
+)
 from app.modules.payment_methods.repository import PaymentMethodRepository
 from app.modules.users.models import User
 
