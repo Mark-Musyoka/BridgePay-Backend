@@ -404,6 +404,141 @@ async def test_payout_rejected_when_exchange_rate_unavailable(client, monkeypatc
 
 
 
+# --- Bank account payout ----------------------------------------------------
+
+async def test_bank_account_payout_success(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
+    )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+
+    token = await _verified_auth(client, email="bank-payout@test.dev")
+    await _fund("bank-payout@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/bank-account",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "bank_account_token": "btok_kenya",
+            "country": "KE",
+            "recipient_email": "someone@test.dev",
+            "amount": "100.00",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "completed"
+
+    # Payout currency defaults to USD, account is KES — 100.00 USD * rate 2
+    # = 200.00 KES actually deducted, not the raw 100.00.
+    balance = await _get_balance("bank-payout@test.dev")
+    assert balance == Decimal("300.00")
+
+
+async def test_bank_account_payout_rejects_invalid_country(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.modules.payouts.service.stripe.Payout.create", lambda **kw: _fake_stripe_payout()
+    )
+
+    token = await _verified_auth(client, email="bank-payout-badcountry@test.dev")
+    await _fund("bank-payout-badcountry@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/bank-account",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "bank_account_token": "btok_fake",
+            "country": "ZZ",
+            "recipient_email": "someone@test.dev",
+            "amount": "100.00",
+        },
+    )
+    assert response.status_code == 422
+
+    balance = await _get_balance("bank-payout-badcountry@test.dev")
+    assert balance == Decimal("500.00")  # never touched — rejected before deduction
+
+
+async def test_bank_account_payout_reverses_on_immediate_failure(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.modules.payouts.service.stripe.Payout.create",
+        lambda **kw: _fake_stripe_payout(status="failed"),
+    )
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+
+    token = await _verified_auth(client, email="bank-payout-fail@test.dev")
+    await _fund("bank-payout-fail@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/bank-account",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "bank_account_token": "btok_declined",
+            "country": "US",
+            "recipient_email": "someone@test.dev",
+            "amount": "100.00",
+        },
+    )
+    assert response.status_code == 201  # the API call itself succeeded, the payout just failed
+    assert response.json()["status"] == "reversed"
+
+    balance = await _get_balance("bank-payout-fail@test.dev")
+    assert balance == Decimal("500.00")  # reversed
+
+
+async def test_bank_account_payout_reverses_on_stripe_exception(client, monkeypatch):
+    import stripe as stripe_sdk
+
+    def raise_error(**kw):
+        raise stripe_sdk.error.InvalidRequestError("Bank account verification failed", None)
+
+    monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", raise_error)
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+
+    token = await _verified_auth(client, email="bank-payout-exc@test.dev")
+    await _fund("bank-payout-exc@test.dev", "500.00")
+
+    response = await client.post(
+        "/api/v1/payouts/bank-account",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "bank_account_token": "btok_bad",
+            "country": "GB",
+            "recipient_email": "someone@test.dev",
+            "amount": "100.00",
+        },
+    )
+    assert response.status_code == 502
+
+    balance = await _get_balance("bank-payout-exc@test.dev")
+    assert balance == Decimal("500.00")  # reversed
+
+
+async def test_bank_account_payout_idempotency_key_prevents_double_deduction(client, monkeypatch):
+    call_count = []
+
+    def fake_payout_create(**kw):
+        call_count.append(1)
+        return _fake_stripe_payout()
+
+    monkeypatch.setattr("app.modules.payouts.service.stripe.Payout.create", fake_payout_create)
+    monkeypatch.setattr("app.modules.payouts.service.convert", _fake_convert(rate=Decimal("2")))
+
+    token = await _verified_auth(client, email="bank-payout-idem@test.dev")
+    await _fund("bank-payout-idem@test.dev", "500.00")
+
+    body = {
+        "bank_account_token": "btok_kenya",
+        "country": "KE",
+        "recipient_email": "someone@test.dev",
+        "amount": "100.00",
+        "idempotency_key": "bank-payout-key-1",
+    }
+    first = await client.post("/api/v1/payouts/bank-account", headers={"Authorization": f"Bearer {token}"}, json=body)
+    second = await client.post("/api/v1/payouts/bank-account", headers={"Authorization": f"Bearer {token}"}, json=body)
+    assert first.json()["id"] == second.json()["id"]
+    assert len(call_count) == 1  # gateway only ever called once
+
+
 # --- Airtel Money Disbursement ---------------------------------------------
 
 async def test_airtel_payout_rejects_insufficient_funds_before_calling_gateway(client, monkeypatch):
