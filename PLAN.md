@@ -1,11 +1,12 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-15 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-16 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
 fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
-conversion, module layer consistency, Airtel Money) — see README.md for
-verified detail.** This file is the original design plus a running
-contract reference; README.md tracks what's actually running and tested.
+conversion, module layer consistency, Airtel Money, bank-account
+payouts) — see README.md for verified detail.** This file is the
+original design plus a running contract reference; README.md tracks
+what's actually running and tested.
 
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego, Mark
@@ -37,7 +38,7 @@ history*, not a stored number you update in place.
 This is the single most important lesson of the project — it's how every real
 payment system (and accounting system) avoids "money disappearing" bugs.
 
-## 4. Data models (v1, now well beyond v1 — see README Phases 7-15)
+## 4. Data models (v1, now well beyond v1 — see README Phases 7-16)
 | Model | Key fields |
 |---|---|
 | `User` | id, email, hashed_password (nullable — null for Google-only accounts), full_name, country (ISO alpha-2, nullable), is_active, is_admin, is_verified, google_id (nullable), stripe_customer_id (nullable), created_at |
@@ -79,7 +80,7 @@ linking. See README Phase 11 for full detail; no longer out of scope.
 | Money | `POST /payment-methods/mpesa` | |
 | Money | `DELETE /payment-methods/{id}` | |
 | Money | `POST /deposits/stripe`, `POST /deposits/mpesa`, `POST /deposits/airtel`, `GET /deposits` | |
-| Money | `POST /payouts/mpesa`, `POST /payouts/stripe-card`, `POST /payouts/airtel`, `GET /payouts` | Real external payouts — money leaves the platform |
+| Money | `POST /payouts/mpesa`, `POST /payouts/stripe-card`, `POST /payouts/bank-account`, `POST /payouts/airtel`, `GET /payouts` | Real external payouts — money leaves the platform |
 | Money | `POST /webhooks/stripe` | |
 | Money | `POST /webhooks/mpesa/stk-callback`, `POST /webhooks/mpesa/b2c-result`, `POST /webhooks/mpesa/b2c-timeout` | |
 | Money | `POST /webhooks/airtel/collection-callback`, `POST /webhooks/airtel/disbursement-callback` | Signature-verified, unlike M-Pesa's callbacks |
@@ -127,19 +128,16 @@ the complete, dated history of each:
 | 13 | Multi-currency deposit/payout conversion |
 | 14 | Module layer consistency (router/schema/service/repository) |
 | 15 | Airtel Money integration (Collections deposits, Disbursement payouts) |
+| 16 | Bank-account payouts (Kenyan local + international, via Stripe bank account tokens) |
 
 
-## 8. Way forward (next up, in priority order)
+## 8. Way forward
 The three items originally deferred out of Phase 11 were Airtel Money,
 bank-account payouts, and multi-currency conversion — see that phase's
-README writeup. Multi-currency conversion (Phase 13) and Airtel Money
-(Phase 15) are now both done; one remains:
+README writeup. All three are now done: multi-currency conversion
+(Phase 13), Airtel Money (Phase 15), bank-account payouts (Phase 16).
 
-| # | Item | Notes |
-|---|---|---|
-| 1 | Bank-account payouts | Kenyan account number + bank code, and international IBAN/SWIFT — likely via Stripe bank-account tokens; required fields vary by country so this needs its own schema per region rather than reusing the card-token flow |
-
-After that: production deployment (backend is deploy-ready — see
+What's left: production deployment (backend is deploy-ready — see
 `Dockerfile`/`render.yaml` — the actual deployment hasn't happened yet)
 and the frontend rebuild to match everything the backend now supports.
 See README's Timeline for the current target date.
@@ -238,8 +236,9 @@ BridgePay-Backend/
         models.py           # Payout
         repository.py
         schemas.py
-        service.py            # real M-Pesa B2C + Stripe card + Airtel
-                               # Disbursement payouts (Phase 15),
+        service.py            # real M-Pesa B2C + Stripe card + Stripe bank
+                               # account (Phase 16) + Airtel Disbursement
+                               # payouts (Phase 15),
                                # deduct-first/reverse-on-failure,
                                # currency-converted (Phase 13)
         router.py             # /payouts/*
@@ -299,10 +298,11 @@ except where a layer would genuinely have nothing in it:
 | `admin` | ❌ | ✅ | ✅ | ✅ | ✅ | No table — read-only reporting layer composing other modules' repositories |
 | `audit` | ✅ | ✅ | ✅ | ✅ | ❌ | No router — logs are written from other modules' request flows and already read back via `GET /admin/audit-logs`; a second endpoint would duplicate it |
 
-Verified as of Phase 14, still holding through Phase 15 (Airtel Money
-was purely additive within existing modules — no module gained or lost
-a layer): every endpoint in § 5 (API surface) exists in code and is
-registered in `app/main.py`; no stub functions, `TODO`s, or
-`NotImplementedError`s anywhere in `app/modules/`; the reasoning for
-each ❌ above is also left as a comment in that module's `__init__.py`.
+Verified as of Phase 14, still holding through Phase 16 (Airtel Money
+and bank-account payouts were both purely additive within existing
+modules — no module gained or lost a layer): every endpoint in § 5 (API
+surface) exists in code and is registered in `app/main.py`; no stub
+functions, `TODO`s, or `NotImplementedError`s anywhere in
+`app/modules/`; the reasoning for each ❌ above is also left as a
+comment in that module's `__init__.py`.
 

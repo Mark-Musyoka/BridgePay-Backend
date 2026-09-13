@@ -10,6 +10,7 @@ from app.core.airtel_client import get_access_token as get_airtel_access_token
 from app.core.airtel_client import get_base_url as get_airtel_base_url
 from app.core.airtel_client import standard_headers as airtel_standard_headers
 from app.core.config import settings
+from app.core.countries import COUNTRIES
 from app.core.exchange_rate_client import ExchangeRateUnavailable, convert
 from app.core.mpesa_client import (
     current_timestamp,
@@ -46,6 +47,13 @@ class AirtelRequestFailed(Exception):
 
 class StripePayoutFailed(Exception):
     pass
+
+
+class InvalidCountry(Exception):
+    pass
+
+
+_VALID_COUNTRY_CODES = frozenset(code for code, _ in COUNTRIES)
 
 
 async def _get_user(db, user_id: uuid.UUID) -> User:
@@ -347,6 +355,95 @@ async def create_stripe_card_payout(
                 type=NotificationType.payout_sent,
                 title="Payout sent",
                 body=f"Your payout of {payout.amount} {payout.currency} was sent to the linked card.",
+            )
+
+    except stripe.error.StripeError as e:
+        await _reverse_deduction(db, payout=payout, reason=str(e))
+        raise StripePayoutFailed(str(e))
+
+    return payout
+
+
+async def create_bank_account_payout(
+    db,
+    *,
+    user: User,
+    account_id: uuid.UUID,
+    bank_account_token: str,
+    country: str,
+    recipient_email: str,
+    amount: Decimal,
+    currency: str,
+    idempotency_key: str | None,
+) -> Payout:
+    """
+    The bank-account counterpart to create_stripe_card_payout — same
+    deduct-first/reverse-on-failure shape, same use of method='standard'
+    (bank transfers settle over days, unlike a card's 'instant'; there's
+    no faster tier to ask for here the way there is for cards). Reuses
+    PayoutProvider.stripe rather than a new enum value: both are still
+    Stripe-mediated payouts, just to a different destination kind — the
+    distinction lives in destination_reference's token prefix
+    (card tok_... vs bank btok_...), not in a separate provider.
+    """
+    payout_repo = PayoutRepository(db)
+
+    if country.upper() not in _VALID_COUNTRY_CODES:
+        raise InvalidCountry(f"'{country}' is not a recognized ISO 3166-1 alpha-2 country code")
+
+    if idempotency_key:
+        existing = await payout_repo.get_by_idempotency_key_for_user(user.id, idempotency_key)
+        if existing is not None:
+            return existing
+
+    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+        db, account_id=account_id, amount=amount, currency=currency.upper()
+    )
+    conversion_happened = currency.upper() != account_currency.upper()
+
+    payout = await payout_repo.create(
+        user_id=user.id,
+        account_id=account_id,
+        provider=PayoutProvider.stripe,
+        destination_reference=bank_account_token,
+        recipient_email=recipient_email,
+        amount=amount,
+        currency=currency.upper(),
+        idempotency_key=idempotency_key,
+        exchange_rate=exchange_rate if conversion_happened else None,
+        converted_amount=converted_amount if conversion_happened else None,
+    )
+
+    amount_in_smallest_unit = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
+
+    try:
+        # Same caveat as the card flow above: stripe.Payout.create pays
+        # out FROM the platform's own Stripe balance TO a destination —
+        # this requires the relevant payout capability enabled for the
+        # given country/currency on a standard account, which isn't
+        # automatic. Flagged the same way, not assumed to just work.
+        payout_result = stripe.Payout.create(
+            amount=amount_in_smallest_unit,
+            currency=currency.lower(),
+            method="standard",
+            destination=bank_account_token,
+        )
+        await payout_repo.set_external_reference(payout, payout_result.id)
+
+        if payout_result.status == "failed":
+            await _reverse_deduction(db, payout=payout, reason="Stripe bank payout failed immediately")
+        else:
+            # Bank payouts settle over days and can still fail later —
+            # see handle_stripe_payout_failed_event, same as cards.
+            await payout_repo.mark_completed(payout)
+            user = await _get_user(db, payout.user_id)
+            await notify(
+                db,
+                user_id=payout.user_id,
+                user_email=user.email,
+                type=NotificationType.payout_sent,
+                title="Payout sent",
+                body=f"Your payout of {payout.amount} {payout.currency} was sent to the linked bank account ({country.upper()}).",
             )
 
     except stripe.error.StripeError as e:

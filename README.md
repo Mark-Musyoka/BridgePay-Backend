@@ -373,10 +373,32 @@ the account currency default.
 | Untested against live endpoints | Same caveat as Phase 11's Stripe/M-Pesa integration — no real Airtel developer-portal credentials available. External HTTP calls are mocked via monkeypatch in tests |
 | Signing scheme confidence | Airtel doesn't publish one single, universally-documented callback-signing spec the way Stripe does. The `X-Signature`/HMAC-SHA256 scheme implemented here matches common integration patterns seen in the wild, but should be re-confirmed against the developer portal's callback-signing docs once real credentials are available — flagged the same way, not assumed correct |
 
+### Phase 16 — Bank-account payouts
+The last of the three items deferred out of Phase 11 (Airtel Money,
+bank-account payouts, multi-currency conversion — Airtel shipped in
+Phase 15, multi-currency in Phase 13). Adds a real destination kind
+alongside cards and mobile money: a Kenyan local bank account (account
+number + bank code) or an international one (IBAN + SWIFT/BIC), via
+Stripe.
+
+| Component | Detail |
+|---|---|
+| `POST /payouts/bank-account` | Same deduct-first/reverse-on-failure discipline as every other payout provider, `method="standard"` rather than `"instant"` (bank transfers settle over days; there's no faster tier to ask for the way there is for cards) |
+| `BankAccountPayoutCreate` schema | Its own schema rather than folded into the card payout's, since a bank destination needs a `country` the card flow doesn't |
+| PCI-adjacent handling | Same as the card flow: the bank account token (`btok_...`) must be created client-side via Stripe.js — raw account numbers, IBANs, bank codes, and SWIFT/BIC are never accepted by this backend at all. Stripe.js's tokenization already absorbs the field differences between a Kenyan local account and an international one, so this backend never needs to branch on them |
+| `country` field | Not sent to Stripe (it's already baked into the token) — validated against the existing ISO 3166-1 country list and surfaced in the confirmation notification, since a Kenyan payout and a US one carry different real-world settlement expectations worth telling the user about |
+| Provider | Reuses `PayoutProvider.stripe` rather than a new enum value — both card and bank payouts are Stripe-mediated; the distinction lives in `destination_reference`'s token prefix (`tok_...` vs `btok_...`), not in a separate provider |
+
+Same untested-against-live-endpoints caveat as every other Stripe/M-Pesa/
+Airtel integration in this project — no real Stripe bank-account payout
+has been exercised, `stripe.Payout.create` is mocked in tests. The
+"requires the relevant payout capability enabled" caveat from the card
+flow (Phase 11) applies here too, likely more so — bank payout support
+varies more by country than card payout support does.
+
 ## Explicitly not built
 | Item | Why |
 |---|---|
-| Real bank-account-number payouts | Card token and M-Pesa phone payouts are built; a raw bank account/routing number flow isn't — the required fields vary by country and weren't specified (see Phase 11) |
 | Production deployment | Backend is deploy-ready; the actual deployment hasn't happened yet |
 
-See PLAN.md § 8 (Way forward) for what's next, in priority order.
+See PLAN.md § 8 (Way forward) for what's left.

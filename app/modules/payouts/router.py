@@ -9,6 +9,7 @@ from app.modules.accounts.repository import AccountRepository
 from app.modules.payouts.repository import PayoutRepository
 from app.modules.payouts.schemas import (
     AirtelPayoutCreate,
+    BankAccountPayoutCreate,
     MpesaPayoutCreate,
     PayoutListResponse,
     PayoutResponse,
@@ -17,10 +18,12 @@ from app.modules.payouts.schemas import (
 from app.modules.payouts.service import (
     AirtelRequestFailed,
     InsufficientFundsError,
+    InvalidCountry,
     InvalidPhoneNumber,
     MpesaRequestFailed,
     StripePayoutFailed,
     create_airtel_payout,
+    create_bank_account_payout,
     create_mpesa_payout,
     create_stripe_card_payout,
 )
@@ -98,6 +101,45 @@ async def payout_via_stripe_card(
             currency=payload.currency,
             idempotency_key=payload.idempotency_key,
         )
+    except InsufficientFundsError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
+    except ExchangeRateUnavailable as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except StripePayoutFailed as e:
+        await db.commit()  # reversal already happened, commit it
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+    await db.commit()
+    return payout
+
+
+@router.post("/bank-account", response_model=PayoutResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def payout_via_bank_account(
+    request: Request,
+    payload: BankAccountPayoutCreate,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_id = await _get_own_account_id(db, current_user)
+
+    try:
+        payout = await create_bank_account_payout(
+            db,
+            user=current_user,
+            account_id=account_id,
+            bank_account_token=payload.bank_account_token,
+            country=payload.country,
+            recipient_email=payload.recipient_email,
+            amount=payload.amount,
+            currency=payload.currency,
+            idempotency_key=payload.idempotency_key,
+        )
+    except InvalidCountry as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except InsufficientFundsError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
