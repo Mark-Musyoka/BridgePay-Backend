@@ -1,6 +1,6 @@
 # BridgePay Backend
 
-FastAPI backend for BridgePay — a learning-project PayPal-style payments
+FastAPI backend for BridgePay — a PayPal-style payments
 platform (auth, wallets, transfers, admin). See [PLAN.md](./PLAN.md) for the
 full architecture and original phased build order.
 
