@@ -75,12 +75,14 @@ configured locally. Remaining work between now and launch is mostly
 frontend (which is being rebuilt to match everything the backend now
 supports) plus deployment.
 
-## Related repo
-This is the backend only. The frontend client lives in a separate repo:
-[BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend)
+## Related repos
+This is the backend only. Two other repos:
+- [BridgePay-Frontend](https://github.com/Mark-Musyoka/BridgePay-Frontend) — the app (login, dashboard, transfers, deposits/payouts, admin)
+- [BridgePay-Web](https://github.com/Mark-Musyoka/BridgePay-Web) — the marketing/introduction site on BridgePay's main domain
 
 ```bash
 git clone https://github.com/Mark-Musyoka/BridgePay-Frontend.git
+git clone https://github.com/Mark-Musyoka/BridgePay-Web.git
 ```
 
 ## Setup
