@@ -9,7 +9,7 @@ full architecture and original phased build order.
 |---|---|---|
 | Mark Musyoka | [@Mark-Musyoka](https://github.com/Mark-Musyoka) | Owner (Deployments & Hosting) |
 | Abednego Ndimu | [@abednegoingplaces](https://github.com/abednegoingplaces) |Handling Backend, Frontend & Database |
-| Franklin Tumaini | [@Antony-debug-jpg](https://github.com/Antony-debug-jpg) | Collaborator—Backend, database and frontend |
+| Frankline Tumaini | [@Antony-debug-jpg](https://github.com/Antony-debug-jpg) | Collaborator—Backend, database and frontend |
 
 ## Tech stack
 | Layer | Choice |
