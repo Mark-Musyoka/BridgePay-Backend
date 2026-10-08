@@ -1,10 +1,11 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-16 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-17 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
 fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
 conversion, module layer consistency, Airtel Money, bank-account
-payouts) — see README.md for verified detail.** This file is the
+payouts, rate-limiter resilience + notification/payout transaction
+linking) — see README.md for verified detail.** This file is the
 original design plus a running contract reference; README.md tracks
 what's actually running and tested.
 
@@ -46,10 +47,10 @@ payment system (and accounting system) avoids "money disappearing" bugs.
 | `Transaction` | id, from_account_id, to_account_id, amount, currency, status (pending/completed/failed), type (transfer/deposit/withdrawal), created_at, reference_note — the immutable ledger |
 | `AuditLog` | id, user_id (nullable), action, detail, ip_address, created_at — who-did-what, including failed attempts, separate from the ledger above |
 | `RefreshToken` / `EmailVerificationToken` / `PasswordResetToken` / `OAuthHandoffCode` | All hashed, single-use tokens, same pattern |
-| `Notification` | id, user_id, type, title, body, is_read, created_at |
+| `Notification` | id, user_id, type, title, body, is_read, transaction_id (nullable FK — Phase 17), created_at |
 | `PaymentMethod` | id, user_id, provider (stripe/mpesa), type (card/mobile_wallet), external_reference, masked_details, is_default |
 | `Deposit` | id, user_id, account_id, provider (stripe/mpesa/airtel), status, amount, currency, exchange_rate (nullable), converted_amount (nullable), external_reference, idempotency_key, failure_reason |
-| `Payout` | id, user_id, account_id, provider (mpesa/stripe/airtel), destination_reference, recipient_email, amount, currency, exchange_rate (nullable), converted_amount (nullable), status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason |
+| `Payout` | id, user_id, account_id, provider (mpesa/stripe/airtel), destination_reference, recipient_email, amount, currency, exchange_rate (nullable), converted_amount (nullable), status (pending/completed/failed/reversed), external_reference, idempotency_key, failure_reason, transaction_id (nullable FK — Phase 17) |
 
 Built: **PaymentMethod** — real Stripe card linking + real M-Pesa phone
 linking. See README Phase 11 for full detail; no longer out of scope.
@@ -93,7 +94,7 @@ linking. See README Phase 11 for full detail; no longer out of scope.
 |---|---|
 | Password storage | bcrypt, never plaintext, never logged |
 | JWT | Short expiry + refresh token pattern |
-| Rate limiting | On `/auth/login` and `/transfers` (prevent brute force / spam) |
+| Rate limiting | On `/auth/register`, `/auth/login`, and `/transfers` (prevent brute force / spam), Redis-backed. Degrades gracefully (`swallow_errors=True`, Phase 17) rather than 500ing every request if the Redis storage itself is unreachable — a rate-limiter outage shouldn't take down the features it protects |
 | Input validation | Pydantic on every endpoint (amounts must be positive, currency whitelisted, etc.) |
 | Money math | Always `Decimal`, never `float` |
 | Concurrency safety | Every transfer wrapped in a DB transaction with row-level locking (prevents two simultaneous transfers draining an account below zero) |
@@ -129,6 +130,7 @@ the complete, dated history of each:
 | 14 | Module layer consistency (router/schema/service/repository) |
 | 15 | Airtel Money integration (Collections deposits, Disbursement payouts) |
 | 16 | Bank-account payouts (Kenyan local + international, via Stripe bank account tokens) |
+| 17 | Rate-limiter resilience (`swallow_errors`) + `transaction_id` linking on `Notification`/`Payout` |
 
 
 ## 8. Way forward
@@ -137,9 +139,28 @@ bank-account payouts, and multi-currency conversion — see that phase's
 README writeup. All three are now done: multi-currency conversion
 (Phase 13), Airtel Money (Phase 15), bank-account payouts (Phase 16).
 
-What's left: production deployment (backend is deploy-ready — see
-`Dockerfile`/`render.yaml` — the actual deployment hasn't happened yet)
-and the frontend rebuild to match everything the backend now supports.
+The frontend rebuild this section used to list as outstanding is also
+done — every page in BridgePay-Frontend is now built by hand (Tailwind,
+no Lovable/Stitch), themed consistently, with dark mode, and wired to
+every backend endpoint this plan describes (see that repo's own
+PLAN.md/README.md for detail).
+
+What's actually left:
+- **Production deployment** — backend is deploy-ready (see
+  `Dockerfile`/`render.yaml`), hasn't happened yet
+- **Moving all three repos into a GitHub organization** — currently
+  under Mark's personal account; planned for cleaner team access and
+  deployment, pending Mark transferring ownership of each repo (only
+  the current owner can do that)
+- **Real Stripe/M-Pesa/Airtel/Google credentials** — every integration
+  in Phases 11/12/15/16 is implemented and tested against mocked
+  external calls, but none has been exercised against a real sandbox
+  yet (see each phase's README note)
+- Redis for rate limiting is currently Upstash-hosted rather than
+  local, and its credentials have had auth issues — no longer blocks
+  anything (Phase 17's `swallow_errors` fix means the app degrades
+  gracefully instead of failing), but real rate limiting is
+  effectively a no-op until that's sorted
 See README's Timeline for the current target date.
 
 ## 9. Folder structure (as built — reorganized into modules in Phase 9,

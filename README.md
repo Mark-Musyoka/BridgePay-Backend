@@ -68,12 +68,14 @@ everything about transfers (the model, the locking logic, the endpoint,
 the confirmation email task) is in `app/modules/transfers/`.
 
 ## Timeline
-Started as a learning project with no fixed deadline — now targeting a
-launch by **Friday, September 18, 2026**. The backend is functionally
-complete (see Status below); real Stripe/M-Pesa/Google credentials are
-configured locally. Remaining work between now and launch is mostly
-frontend (which is being rebuilt to match everything the backend now
-supports) plus deployment.
+Started as a learning project with no fixed deadline. An earlier target
+of Friday, September 18, 2026 came and went; the backend was already
+functionally complete by then (see Status below). What was actually
+outstanding — the frontend — is now also done: every page in
+BridgePay-Frontend is hand-built, themed consistently, and wired to
+every endpoint this backend exposes. What's left is production
+deployment (backend is deploy-ready, hasn't happened yet) and moving
+all three repos into a shared GitHub organization (see PLAN.md § 8).
 
 ## Related repos
 This is the backend only. Two other repos:
@@ -128,7 +130,11 @@ there).
 versioning, email verification/password reset (Phase 8), a modular
 codebase reorganization with a bug-fix pass (Phase 9),
 production-readiness fixes (Phase 10), country/notifications/settings/
-real Stripe+M-Pesa payments (Phase 11), and Google OAuth (Phase 12).**
+real Stripe+M-Pesa payments (Phase 11), Google OAuth (Phase 12),
+multi-currency conversion (Phase 13), module layer consistency
+(Phase 14), Airtel Money (Phase 15), bank-account payouts (Phase 16),
+and rate-limiter resilience + notification/payout transaction linking
+(Phase 17).**
 Every
 endpoint has been tested against a
 real running Postgres + Redis + Celery stack — registered users, executed
@@ -397,6 +403,46 @@ has been exercised, `stripe.Payout.create` is mocked in tests. The
 "requires the relevant payout capability enabled" caveat from the card
 flow (Phase 11) applies here too, likely more so — bank payout support
 varies more by country than card payout support does.
+
+### Phase 17 — Rate-limiter resilience + notification/payout transaction linking
+Two unrelated fixes, found while getting the backend running for real
+locally against the Next.js frontend for the first time.
+
+**Rate-limiter resilience.** `POST /auth/register` was returning a raw
+`500` for every request — not a rate-limit `429`, an actual unhandled
+crash. Traced to `slowapi`'s `Limiter`, which reuses `CELERY_BROKER_URL`
+as its storage backend (see Phase 10): when that Redis instance was
+unreachable or misconfigured (a bad password, in this case — see the
+note below), `slowapi` raised the raw `redis.exceptions.ConnectionError`/
+`AuthenticationError` straight through, taking down the very endpoint
+it was supposed to be protecting. Fixed with `slowapi`'s documented
+`swallow_errors=True` option (`app/core/limiter.py`) — a storage error
+is now logged and the request proceeds normally, rate-limiting becomes
+a no-op for that one request rather than a hard dependency. Verified by
+reproducing the exact failure through the real `@limiter.limit(...)`
+decorator path (not just checking the parameter exists): with a
+deliberately broken Redis URL, the decorated endpoint raised
+`ConnectionError` before the fix and ran normally after it.
+
+**Notification/payout transaction linking.** `Notification` gained a
+nullable `transaction_id` (FK to `transactions.id`), so the frontend
+can deep-link a notification straight to the transaction it's about,
+instead of only being able to mark it read. Set on
+`transfer_sent`/`transfer_received`, `deposit_completed`, and
+`payout_sent`/`payout_reversed`; left `null` on `deposit_failed`/
+`payout_failed` (nothing was ever recorded) and `security_alert`/
+`account_update` (not transaction-related). `Payout` also gained its
+own `transaction_id`, needed because the `payout_sent` success
+notification often fires from an async provider callback/webhook
+(M-Pesa B2C result, Airtel disbursement callback) that only has the
+`Payout` row to work with, not the original request's local variables —
+`_deduct_balance_and_record`'s return signature grew a 4th value for
+this, threaded through all four payout-creation functions.
+
+| Note | Detail |
+|---|---|
+| Rate limiting currently a no-op in practice | The Upstash-hosted Redis used for `CELERY_BROKER_URL` locally has an unresolved authentication issue (credential/encoding mismatch, not yet root-caused) — `swallow_errors` means this no longer blocks anything, but it also means rate limiting isn't actually enforcing any limits until that's fixed |
+| `db.flush()` timing | `Transaction.id` is a Python-side default (`uuid.uuid4`), only populated once SQLAlchemy actually flushes — not at object construction. Each notify() call site needed checking individually: some already flushed before reaching their notify() call (payouts' `_deduct_balance_and_record`, transfers' `record_transfer` — both documented as flushing in their own docstrings), others needed an explicit `await db.flush()` added right after `db.add(transaction)` (deposits' `_credit_account_and_record`, payouts' `_reverse_deduction`) |
 
 ## Explicitly not built
 | Item | Why |
