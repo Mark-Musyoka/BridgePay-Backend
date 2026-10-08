@@ -14,6 +14,7 @@ class NotificationResponse(BaseModel):
     title: str
     body: str
     is_read: bool
+    transaction_id: uuid.UUID | None = None
     created_at: datetime
 
 

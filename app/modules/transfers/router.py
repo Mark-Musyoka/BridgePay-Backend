@@ -109,6 +109,7 @@ async def create_transfer(
         type=NotificationType.transfer_sent,
         title="Money sent",
         body=f"You sent {payload.amount} to {payload.to_email}.",
+        transaction_id=transaction.id,
     )
     await notify(
         db,
@@ -117,6 +118,7 @@ async def create_transfer(
         type=NotificationType.transfer_received,
         title="Money received",
         body=f"You received {payload.amount} from {current_user.email}.",
+        transaction_id=transaction.id,
     )
 
     await db.commit()

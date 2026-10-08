@@ -11,9 +11,17 @@ class NotificationRepository:
         self.db = db
 
     async def create(
-        self, *, user_id: uuid.UUID, type: NotificationType, title: str, body: str
+        self,
+        *,
+        user_id: uuid.UUID,
+        type: NotificationType,
+        title: str,
+        body: str,
+        transaction_id: uuid.UUID | None = None,
     ) -> Notification:
-        notification = Notification(user_id=user_id, type=type, title=title, body=body)
+        notification = Notification(
+            user_id=user_id, type=type, title=title, body=body, transaction_id=transaction_id
+        )
         self.db.add(notification)
         await self.db.flush()
         return notification

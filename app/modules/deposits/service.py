@@ -106,6 +106,7 @@ async def _credit_account_and_record(db, *, deposit: Deposit) -> None:
         reference_note=f"{deposit.provider.value} deposit",
     )
     db.add(transaction)
+    await db.flush()  # populates transaction.id, needed for the notify() call below
 
     await DepositRepository(db).mark_completed(deposit)
 
@@ -117,6 +118,7 @@ async def _credit_account_and_record(db, *, deposit: Deposit) -> None:
         type=NotificationType.deposit_completed,
         title="Deposit successful",
         body=f"Your deposit of {deposit.amount} {deposit.currency} has been credited to your wallet.",
+        transaction_id=transaction.id,
     )
 
 

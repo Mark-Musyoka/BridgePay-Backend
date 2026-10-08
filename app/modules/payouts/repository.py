@@ -25,6 +25,7 @@ class PayoutRepository:
         idempotency_key: str | None = None,
         exchange_rate=None,
         converted_amount=None,
+        transaction_id=None,
     ) -> Payout:
         payout = Payout(
             user_id=user_id,
@@ -38,6 +39,7 @@ class PayoutRepository:
             idempotency_key=idempotency_key,
             exchange_rate=exchange_rate,
             converted_amount=converted_amount,
+            transaction_id=transaction_id,
         )
         self.db.add(payout)
         await self.db.flush()

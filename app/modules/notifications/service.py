@@ -13,6 +13,7 @@ async def notify(
     type: NotificationType,
     title: str,
     body: str,
+    transaction_id=None,
 ) -> None:
     """
     Single entry point every other module calls to raise a notification —
@@ -26,7 +27,9 @@ async def notify(
     deposit, etc.), rather than being a separate, potentially
     inconsistent write.
     """
-    await NotificationRepository(db).create(user_id=user_id, type=type, title=title, body=body)
+    await NotificationRepository(db).create(
+        user_id=user_id, type=type, title=title, body=body, transaction_id=transaction_id
+    )
 
     try:
         send_notification_email.delay(to_email=user_email, title=title, body=body)

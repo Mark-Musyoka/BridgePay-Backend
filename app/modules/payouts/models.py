@@ -72,6 +72,16 @@ class Payout(Base):
     external_reference: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # The withdrawal Transaction row written at deduction time (see
+    # _deduct_balance_and_record in service.py). Stored here, not just
+    # held as a local variable, because the "payout sent" success
+    # notification fires later - from an async provider callback/webhook
+    # that only has this Payout row to work with, not the original
+    # request's local variables. Lets that notification link back to the
+    # actual ledger entry.
+    transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -66,7 +66,7 @@ async def _get_user(db, user_id: uuid.UUID) -> User:
 
 async def _deduct_balance_and_record(
     db, *, account_id: uuid.UUID, amount: Decimal, currency: str
-) -> tuple[Decimal, Decimal, str]:
+) -> tuple[Decimal, Decimal, str, uuid.UUID]:
     """
     The core safety-critical step, shared by both providers: lock the
     account, convert amount/currency into the account's own currency if
@@ -88,10 +88,12 @@ async def _deduct_balance_and_record(
     the moment a Stripe payout was requested in a non-account currency:
     it deducted the raw foreign-currency number as if it were KES.
 
-    Returns (converted_amount, exchange_rate, account_currency) so the
-    caller can decide whether a conversion actually happened (compare
-    `currency` to account_currency) and, if so, persist it on the
-    Payout row once that row exists.
+    Returns (converted_amount, exchange_rate, account_currency,
+    transaction_id) so the caller can decide whether a conversion
+    actually happened (compare `currency` to account_currency) and, if
+    so, persist it on the Payout row once that row exists - and so the
+    withdrawal Transaction this just wrote can be linked onto that same
+    Payout row (see Payout.transaction_id).
     """
     account_repo = AccountRepository(db)
     account = await account_repo.get_by_id_locked(account_id)
@@ -115,7 +117,7 @@ async def _deduct_balance_and_record(
     db.add(transaction)
     await db.flush()
 
-    return converted_amount, exchange_rate, account.currency
+    return converted_amount, exchange_rate, account.currency, transaction.id
 
 
 async def _reverse_deduction(db, *, payout: Payout, reason: str) -> None:
@@ -151,6 +153,7 @@ async def _reverse_deduction(db, *, payout: Payout, reason: str) -> None:
         reference_note=f"Reversal of failed payout {payout.id}",
     )
     db.add(reversal_transaction)
+    await db.flush()  # populates reversal_transaction.id, needed for the notify() call below
 
     await PayoutRepository(db).mark_reversed(payout, reason=reason)
 
@@ -165,6 +168,7 @@ async def _reverse_deduction(db, *, payout: Payout, reason: str) -> None:
             f"Your payout of {payout.amount} {payout.currency} could not be completed "
             f"({reason}) and has been returned to your wallet."
         ),
+        transaction_id=reversal_transaction.id,
     )
 
 
@@ -195,7 +199,7 @@ async def create_mpesa_payout(
     # Deduct FIRST — see _deduct_balance_and_record's docstring for why.
     # Raises InsufficientFundsError before anything else happens if the
     # sender can't cover it, same as transfers/service.py.
-    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+    converted_amount, exchange_rate, account_currency, transaction_id = await _deduct_balance_and_record(
         db, account_id=account_id, amount=amount, currency="KES"
     )
     conversion_happened = "KES" != account_currency.upper()
@@ -211,6 +215,7 @@ async def create_mpesa_payout(
         idempotency_key=idempotency_key,
         exchange_rate=exchange_rate if conversion_happened else None,
         converted_amount=converted_amount if conversion_happened else None,
+        transaction_id=transaction_id,
     )
 
     try:
@@ -283,6 +288,7 @@ async def handle_mpesa_b2c_result(db, payload: dict) -> None:
             type=NotificationType.payout_sent,
             title="Payout sent",
             body=f"Your payout of {payout.amount} {payout.currency} to {payout.destination_reference} was sent.",
+            transaction_id=payout.transaction_id,
         )
     else:
         await _reverse_deduction(db, payout=payout, reason=result_desc)
@@ -308,7 +314,7 @@ async def create_stripe_card_payout(
         if existing is not None:
             return existing
 
-    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+    converted_amount, exchange_rate, account_currency, transaction_id = await _deduct_balance_and_record(
         db, account_id=account_id, amount=amount, currency=currency.upper()
     )
     conversion_happened = currency.upper() != account_currency.upper()
@@ -324,6 +330,7 @@ async def create_stripe_card_payout(
         idempotency_key=idempotency_key,
         exchange_rate=exchange_rate if conversion_happened else None,
         converted_amount=converted_amount if conversion_happened else None,
+        transaction_id=transaction_id,
     )
 
     amount_in_smallest_unit = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
@@ -358,6 +365,7 @@ async def create_stripe_card_payout(
                 type=NotificationType.payout_sent,
                 title="Payout sent",
                 body=f"Your payout of {payout.amount} {payout.currency} was sent to the linked card.",
+                transaction_id=transaction_id,
             )
 
     except stripe.error.StripeError as e:
@@ -399,7 +407,7 @@ async def create_bank_account_payout(
         if existing is not None:
             return existing
 
-    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+    converted_amount, exchange_rate, account_currency, transaction_id = await _deduct_balance_and_record(
         db, account_id=account_id, amount=amount, currency=currency.upper()
     )
     conversion_happened = currency.upper() != account_currency.upper()
@@ -415,6 +423,7 @@ async def create_bank_account_payout(
         idempotency_key=idempotency_key,
         exchange_rate=exchange_rate if conversion_happened else None,
         converted_amount=converted_amount if conversion_happened else None,
+        transaction_id=transaction_id,
     )
 
     amount_in_smallest_unit = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
@@ -447,6 +456,7 @@ async def create_bank_account_payout(
                 type=NotificationType.payout_sent,
                 title="Payout sent",
                 body=f"Your payout of {payout.amount} {payout.currency} was sent to the linked bank account ({country.upper()}).",
+                transaction_id=transaction_id,
             )
 
     except stripe.error.StripeError as e:
@@ -499,7 +509,7 @@ async def create_airtel_payout(
         raise InvalidPhoneNumber(str(e))
 
     # Deduct FIRST — see _deduct_balance_and_record's docstring for why.
-    converted_amount, exchange_rate, account_currency = await _deduct_balance_and_record(
+    converted_amount, exchange_rate, account_currency, db_transaction_id = await _deduct_balance_and_record(
         db, account_id=account_id, amount=amount, currency="KES"
     )
     conversion_happened = "KES" != account_currency.upper()
@@ -515,11 +525,14 @@ async def create_airtel_payout(
         idempotency_key=idempotency_key,
         exchange_rate=exchange_rate if conversion_happened else None,
         converted_amount=converted_amount if conversion_happened else None,
+        transaction_id=db_transaction_id,
     )
 
     try:
         access_token = await get_airtel_access_token()
         encrypted_pin = encrypt_disbursement_pin()
+        # Airtel's own reference id for this disbursement request - unrelated
+        # to db_transaction_id above (our ledger Transaction row's id).
         transaction_id = str(uuid.uuid4())
 
         payload = {
@@ -581,6 +594,7 @@ async def handle_airtel_disbursement_callback(db, payload: dict) -> None:
             type=NotificationType.payout_sent,
             title="Payout sent",
             body=f"Your payout of {payout.amount} {payout.currency} to {payout.destination_reference} was sent.",
+            transaction_id=payout.transaction_id,
         )
     else:
         reason = f"Airtel Money transaction status: {status_code or 'unknown'}"

@@ -37,6 +37,16 @@ class Notification(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
+    # Nullable: only set for notification types that actually correspond to
+    # a ledger entry (transfer_sent/received, deposit_completed,
+    # payout_sent, payout_reversed). deposit_failed/payout_failed have no
+    # transaction (nothing was ever recorded), and security_alert/
+    # account_update aren't transaction-related at all — those stay NULL.
+    # Lets the frontend deep-link a notification straight to its
+    # transaction detail page.
+    transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True
+    )
     type: Mapped[NotificationType] = mapped_column(
         Enum(NotificationType, name="notification_type"), nullable=False
     )
