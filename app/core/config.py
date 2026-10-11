@@ -73,6 +73,31 @@ class Settings(BaseSettings):
     # it for real tokens. e.g. https://bridgepay.app/auth/google/complete
     FRONTEND_OAUTH_COMPLETE_URL: str = ""
 
+    # --- SMTP (real email sending) ---
+    # Blank SMTP_HOST means "not configured" — every email task below
+    # falls back to its original mocked (log-only) behavior rather than
+    # failing, same resilience pattern as the rate limiter's
+    # swallow_errors (Phase 17). Fill these in to actually send.
+    #
+    # Works with any real SMTP provider. For Resend specifically
+    # (https://resend.com — generous free tier, easiest setup):
+    #   SMTP_HOST=smtp.resend.com
+    #   SMTP_PORT=587
+    #   SMTP_USERNAME=resend          <- literally the word "resend", not your email
+    #   SMTP_PASSWORD=<your re_... API key>
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "onboarding@resend.dev"  # Resend's shared test sender — works with no domain verification, fine until a real domain is verified
+    SMTP_FROM_NAME: str = "BridgePay"
+
+    # This app's own frontend base URL — used to build the actual links
+    # in verification/password-reset emails (e.g. {FRONTEND_BASE_URL}
+    # /verify-email?token=...). Different from FRONTEND_OAUTH_COMPLETE_URL
+    # above, which is one specific route, not the site's root.
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]

@@ -444,6 +444,42 @@ this, threaded through all four payout-creation functions.
 | Rate limiting currently a no-op in practice | The Upstash-hosted Redis used for `CELERY_BROKER_URL` locally has an unresolved authentication issue (credential/encoding mismatch, not yet root-caused) — `swallow_errors` means this no longer blocks anything, but it also means rate limiting isn't actually enforcing any limits until that's fixed |
 | `db.flush()` timing | `Transaction.id` is a Python-side default (`uuid.uuid4`), only populated once SQLAlchemy actually flushes — not at object construction. Each notify() call site needed checking individually: some already flushed before reaching their notify() call (payouts' `_deduct_balance_and_record`, transfers' `record_transfer` — both documented as flushing in their own docstrings), others needed an explicit `await db.flush()` added right after `db.add(transaction)` (deposits' `_credit_account_and_record`, payouts' `_reverse_deduction`) |
 
+### Phase 18 — Real SMTP email sending
+Every email this backend sends — verification, password reset,
+notifications, transfer confirmations — was mocked (logged, never
+actually sent). Added real sending over SMTP (`aiosmtplib`), while
+keeping the mock as an automatic fallback rather than a mode you have
+to remember to switch: `app/core/email.py`'s `is_configured()` checks
+whether `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD` are all set, and
+every email task checks that before attempting a real send — unset
+means it logs exactly as before, so local dev with no SMTP credentials
+keeps working unchanged. Works with any real SMTP provider;
+`config.py`'s comments document Resend specifically (recommended —
+generous free tier, no domain verification needed to start, using
+their shared `onboarding@resend.dev` sender).
+
+New config: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`, and `FRONTEND_BASE_URL` (used to
+build the actual links inside verification/reset emails — e.g.
+`{FRONTEND_BASE_URL}/verify-email?token=...` — distinct from
+`FRONTEND_OAUTH_COMPLETE_URL`, which is one specific route).
+
+`send_email()` never raises — a failed send is logged and swallowed,
+matching this codebase's established resilience pattern (Phase 17):
+an email provider being down should never be what breaks registration,
+a password reset, or a transfer. Verified three ways: the real app
+(all touched modules + the full FastAPI app) imports cleanly; a
+deliberately unreachable SMTP target confirms `send_email()` returns
+`False` without raising; and a real local SMTP debug server
+(`aiosmtpd`) confirms the actual message construction — headers, the
+required `multipart/alternative` text+HTML structure — round-trips
+correctly.
+
+| Note | Detail |
+|---|---|
+| `text_body` is required, not optional | HTML-only email gets penalized by spam filters and some clients — every call site supplies a plain-text equivalent, not an afterthought |
+| Module named `app/core/email.py` | Deliberately checked this doesn't collide with the stdlib `email` package it imports from (`email.message.EmailMessage`) — Python 3's absolute-import default means `app.core.email` and `email` are different modules, confirmed by actually importing both side by side, not just assumed |
+
 ## Explicitly not built
 | Item | Why |
 |---|---|

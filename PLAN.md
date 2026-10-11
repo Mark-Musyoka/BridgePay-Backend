@@ -1,13 +1,13 @@
 # BridgePay — Backend Plan
 
-**Status: all 6 original phases + Phases 7-17 (refresh tokens, versioning,
+**Status: all 6 original phases + Phases 7-18 (refresh tokens, versioning,
 email verification/password reset, modular reorg, production-readiness
 fixes, real Stripe+M-Pesa payments, Google OAuth, multi-currency
 conversion, module layer consistency, Airtel Money, bank-account
 payouts, rate-limiter resilience + notification/payout transaction
-linking) — see README.md for verified detail.** This file is the
-original design plus a running contract reference; README.md tracks
-what's actually running and tested.
+linking, real SMTP email sending) — see README.md for verified detail.**
+This file is the original design plus a running contract reference;
+README.md tracks what's actually running and tested.
 
 ## 1. What this is
 A learning-project payments platform (PayPal-style) built by Abednego, Mark
@@ -131,6 +131,7 @@ the complete, dated history of each:
 | 15 | Airtel Money integration (Collections deposits, Disbursement payouts) |
 | 16 | Bank-account payouts (Kenyan local + international, via Stripe bank account tokens) |
 | 17 | Rate-limiter resilience (`swallow_errors`) + `transaction_id` linking on `Notification`/`Payout` |
+| 18 | Real SMTP email sending (auth verification/reset, notifications, transfer confirmations) |
 
 
 ## 8. Way forward
